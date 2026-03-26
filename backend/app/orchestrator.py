@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
+import logging
 import threading
 from datetime import datetime, timedelta
 from queue import Empty, PriorityQueue
@@ -30,6 +32,8 @@ from .models import (
     Vulnerability,
 )
 from .pipeline import PipelineResult, execute_scan_pipeline
+
+logger = logging.getLogger(__name__)
 
 
 def _json_dumps(payload: object) -> str:
@@ -109,7 +113,7 @@ def _stable_fingerprint(vuln_data: dict[str, object]) -> str:
             str(vuln_data.get("cve") or ""),
         ]
     )
-    return raw
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
 class ASMOrchestrator:
@@ -146,6 +150,67 @@ class ASMOrchestrator:
                 return
             self.pending_job_ids.add(job_id)
         self.queue.put((priority, _now().timestamp(), job_id))
+
+    def requeue_job(self, db: Session, job_id: int) -> ScanJob | None:
+        job = db.query(ScanJob).filter(ScanJob.id == job_id).one_or_none()
+        if job is None:
+            return None
+        job.status = "queued"
+        job.progress = 0.0
+        job.started_at = None
+        job.next_run_at = _now()
+        job.worker_hint = None
+        job.last_error = None
+        if job.finished_at is not None:
+            job.finished_at = None
+        self.enqueue_job(job.id, job.priority)
+        db.flush()
+        return job
+
+    def recover_stale_jobs(self, db: Session) -> int:
+        recovered_job_ids: set[int] = set()
+        stale_cutoff = _now() - timedelta(minutes=10)
+        stale_running = (
+            db.query(ScanJob)
+            .filter(ScanJob.status == "running")
+            .filter((ScanJob.started_at.is_(None)) | (ScanJob.started_at < stale_cutoff))
+            .all()
+        )
+        for job in stale_running:
+            job.status = "retry_pending" if job.attempts < job.max_retries else "failed"
+            job.last_error = job.last_error or "Recovered stale running job on startup"
+            job.next_run_at = _now()
+            job.progress = 0.0
+            job.started_at = None
+            job.worker_hint = None
+            if job.status == "retry_pending":
+                self.enqueue_job(job.id, job.priority)
+            else:
+                job.finished_at = _now()
+            recovered_job_ids.add(job.id)
+
+        stuck_retry = (
+            db.query(ScanJob)
+            .filter(ScanJob.status == "retry_pending")
+            .filter((ScanJob.next_run_at.is_(None)) | (ScanJob.next_run_at <= _now()))
+            .all()
+        )
+        for job in stuck_retry:
+            self.enqueue_job(job.id, job.priority)
+            recovered_job_ids.add(job.id)
+
+        errored_queued = (
+            db.query(ScanJob)
+            .filter(ScanJob.status == "queued")
+            .filter(ScanJob.attempts > 0)
+            .filter(ScanJob.last_error.is_not(None))
+            .all()
+        )
+        for job in errored_queued:
+            self.enqueue_job(job.id, job.priority)
+            recovered_job_ids.add(job.id)
+        db.flush()
+        return len(recovered_job_ids)
 
     def create_job(
         self,
@@ -227,14 +292,14 @@ class ASMOrchestrator:
                     self._queue_due_monitoring(db)
                     self._mark_offline_nodes(db)
             except Exception:
-                pass
+                logger.exception("Scheduler loop error")
             self.stop_event.wait(settings.scheduler_interval_seconds)
 
     def _queue_existing_jobs(self, db: Session) -> None:
         now = _now()
         jobs = (
             db.query(ScanJob)
-            .filter(ScanJob.status == "queued")
+            .filter(ScanJob.status.in_(["queued", "retry_pending"]))
             .filter((ScanJob.next_run_at.is_(None)) | (ScanJob.next_run_at <= now))
             .all()
         )
@@ -283,6 +348,7 @@ class ASMOrchestrator:
                 with session_scope() as db:
                     self._process_job(db, job_id, worker_name)
             except Exception:
+                logger.exception("Worker loop error for job_id=%s", job_id)
                 continue
             finally:
                 with self.lock:
@@ -473,16 +539,18 @@ class ASMOrchestrator:
 
         job.status = "running"
         job.started_at = _now()
+        job.finished_at = None
         job.progress = 10.0
         job.attempts += 1
         job.worker_hint = worker_name
+        job.last_error = None
         db.flush()
         db.commit()
         job = db.query(ScanJob).filter(ScanJob.id == job_id).one()
         target = db.query(Target).filter(Target.id == job.target_id).one()
 
         try:
-            result = execute_scan_pipeline(target)
+            result = execute_scan_pipeline(target, scan_kind=job.kind)
             allowed_streams, allowed_vulnerabilities = _apply_blacklist(db, target, result.streams, result.vulnerabilities)
             result.streams = allowed_streams
             result.vulnerabilities = allowed_vulnerabilities
@@ -493,6 +561,7 @@ class ASMOrchestrator:
             target.last_intelligence_sync = _now()
             job.progress = 100.0
             job.status = "completed"
+            job.last_error = None
             job.finished_at = _now()
             self._run_automations(db, job, persisted_vulnerabilities)
             simulate_attack_paths(db, target.id)
@@ -502,11 +571,13 @@ class ASMOrchestrator:
                 job.status = "retry_pending"
                 job.next_run_at = _now() + timedelta(minutes=2 ** job.attempts)
                 job.progress = 0.0
+                job.finished_at = None
             else:
                 job.status = "failed"
                 job.finished_at = _now()
+            logger.exception("Job processing failed for job_id=%s", job.id)
         finally:
-            node = db.query(ScannerNode).filter(ScannerNode.node_name == worker_name).one_or_none()
+            node = db.query(ScannerNode).filter(or_(ScannerNode.node_name == worker_name, ScannerNode.name == worker_name)).one_or_none()
             if node is not None:
                 node.current_load = 0
                 node.last_heartbeat = _now()

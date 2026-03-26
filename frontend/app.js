@@ -40,6 +40,7 @@ const elements = {
   rawStreamList: document.getElementById("rawStreamList"),
   runIntel: document.getElementById("runIntel"),
   scanSelected: document.getElementById("scanSelected"),
+  recoverJobs: document.getElementById("recoverJobs"),
   jobSearch: document.getElementById("jobSearch"),
   jobSearchBtn: document.getElementById("jobSearchBtn"),
   jobTable: document.getElementById("jobTable"),
@@ -77,8 +78,25 @@ function setHint(message, tone = "info") {
   elements.scanHint.dataset.tone = tone;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function h(value) {
+  return escapeHtml(value);
+}
+
+function safeJson(value) {
+  return escapeHtml(JSON.stringify(value ?? {}, null, 2));
+}
+
 function badge(label, tone = "info") {
-  return `<span class="badge ${tone}">${label}</span>`;
+  return `<span class="badge ${tone}">${h(label)}</span>`;
 }
 
 function severityTone(value) {
@@ -92,7 +110,7 @@ function severityTone(value) {
 function statusTone(value) {
   const status = String(value || "").toLowerCase();
   if (status === "completed" || status === "resolved") return "success";
-  if (status === "running" || status === "queued" || status === "pending") return "warning";
+  if (status === "running" || status === "queued" || status === "pending" || status === "retry_pending") return "warning";
   if (status === "failed") return "danger";
   return "info";
 }
@@ -200,14 +218,17 @@ function renderTargetTable(targets) {
     .map(
       (target) => `
         <tr data-target-id="${target.id}">
-          <td><strong>${target.name}</strong></td>
-          <td>${target.target_type}</td>
+          <td><strong>${h(target.name)}</strong></td>
+          <td>${h(target.target_type)}</td>
           <td>${target.asset_count}</td>
           <td>${target.vulnerability_count}</td>
           <td>${target.exposure_count}</td>
           <td>${target.identity_count}</td>
           <td>${badge(`C${target.business_criticality}`, "warning")}</td>
-          <td>${target.latest_job_status ? badge(target.latest_job_status, statusTone(target.latest_job_status)) : "N/A"}</td>
+          <td>
+            ${target.latest_job_status ? badge(target.latest_job_status, statusTone(target.latest_job_status)) : "N/A"}
+            ${target.latest_job_error ? `<div class="list-meta">${h(target.latest_job_error)}</div>` : ""}
+          </td>
         </tr>
       `
     )
@@ -272,7 +293,7 @@ function renderGraph(graph) {
       return `
         <g>
           <circle cx="${point.x}" cy="${point.y}" r="16" style="fill:${color}"></circle>
-          <text x="${point.x + 22}" y="${point.y + 4}">${node.label.slice(0, 28)}</text>
+          <text x="${point.x + 22}" y="${point.y + 4}">${h((node.label || "").slice(0, 28))}</text>
         </g>
       `;
     })
@@ -293,8 +314,8 @@ function renderTargetIntel(report, monitoring = []) {
     (item) => `
       <article class="attack-card">
         <div class="attack-score">Score ${item.score}</div>
-        <strong>${item.summary}</strong>
-        <div class="list-meta">Entry: ${item.entry.label} | Goal: ${item.goal.label}</div>
+        <strong>${h(item.summary)}</strong>
+        <div class="list-meta">Entry: ${h(item.entry.label)} | Goal: ${h(item.goal.label)}</div>
       </article>
     `,
     "No attack paths generated yet."
@@ -305,8 +326,8 @@ function renderTargetIntel(report, monitoring = []) {
     report.assets,
     (asset) => `
       <article class="list-item">
-        <header><strong>${asset.value}</strong>${badge(asset.classification, "info")}</header>
-        <div class="list-meta">${asset.kind} • exposure: ${asset.exposure} • risk: ${asset.risk_score}</div>
+        <header><strong>${h(asset.value)}</strong>${badge(asset.classification, "info")}</header>
+        <div class="list-meta">${h(asset.kind)} • exposure: ${h(asset.exposure)} • risk: ${asset.risk_score}</div>
       </article>
     `,
     "No assets for this target."
@@ -317,8 +338,8 @@ function renderTargetIntel(report, monitoring = []) {
     report.vulnerabilities.filter((item) => item.source === "exposure_engine" || item.exposure !== "internal"),
     (item) => `
       <article class="list-item">
-        <header><strong>${item.title}</strong>${badge(item.severity, severityTone(item.severity))}</header>
-        <div class="list-meta">${item.host || "N/A"} • risk ${item.risk_score} • ${item.exposure}</div>
+        <header><strong>${h(item.title)}</strong>${badge(item.severity, severityTone(item.severity))}</header>
+        <div class="list-meta">${h(item.host || "N/A")} • risk ${item.risk_score} • ${h(item.exposure)}</div>
       </article>
     `,
     "No exposure findings."
@@ -329,9 +350,9 @@ function renderTargetIntel(report, monitoring = []) {
     report.identity_exposures,
     (item) => `
       <article class="list-item">
-        <header><strong>${item.principal}</strong>${badge(item.privilege_level, "warning")}</header>
-        <div class="list-meta">${item.kind} • ${item.secret_type || "unknown secret"} • ${item.source}</div>
-        <div class="list-meta">${item.evidence}</div>
+        <header><strong>${h(item.principal)}</strong>${badge(item.privilege_level, "warning")}</header>
+        <div class="list-meta">${h(item.kind)} • ${h(item.secret_type || "unknown secret")} • ${h(item.source)}</div>
+        <div class="list-meta">${h(item.evidence)}</div>
       </article>
     `,
     "No identity exposure observed."
@@ -342,9 +363,9 @@ function renderTargetIntel(report, monitoring = []) {
     report.vulnerabilities,
     (item) => `
       <article class="list-item">
-        <header><strong>${item.title}</strong>${badge(item.severity, severityTone(item.severity))}</header>
-        <div class="list-meta">${item.cve || "No CVE"} • CVSS ${item.cvss} • EPSS ${item.epss} • risk ${item.risk_score}</div>
-        <div class="list-meta">${item.threat_context} • ${item.exploit_maturity}</div>
+        <header><strong>${h(item.title)}</strong>${badge(item.severity, severityTone(item.severity))}</header>
+        <div class="list-meta">${h(item.cve || "No CVE")} • CVSS ${item.cvss} • EPSS ${item.epss} • risk ${item.risk_score}</div>
+        <div class="list-meta">${h(item.threat_context)} • ${h(item.exploit_maturity)}</div>
       </article>
     `,
     "No vulnerabilities for this target."
@@ -355,8 +376,8 @@ function renderTargetIntel(report, monitoring = []) {
     monitoring,
     (item) => `
       <article class="list-item">
-        <header><strong>${item.name}</strong>${badge(item.enabled ? "enabled" : "disabled", item.enabled ? "success" : "warning")}</header>
-        <div class="list-meta">${item.mode} • next run ${fmtDate(item.next_run_at)}</div>
+        <header><strong>${h(item.name)}</strong>${badge(item.enabled ? "enabled" : "disabled", item.enabled ? "success" : "warning")}</header>
+        <div class="list-meta">${h(item.mode)} • next run ${h(fmtDate(item.next_run_at))}</div>
       </article>
     `,
     "No monitoring rules yet."
@@ -367,7 +388,7 @@ function renderTargetIntel(report, monitoring = []) {
     report.raw_asset_streams,
     (item) => `
       <article class="list-item">
-        <header><strong>${item.asset_key}</strong>${badge(item.source, "info")}</header>
+        <header><strong>${h(item.asset_key)}</strong>${badge(item.source, "info")}</header>
         <div class="list-meta">confidence ${item.confidence} • trusted: ${item.trusted ? "yes" : "no"}</div>
       </article>
     `,
@@ -380,14 +401,20 @@ function renderJobs(jobs) {
     .map(
       (job) => `
         <tr data-job-id="${job.id}">
-          <td>${job.target_name || job.target_id}</td>
-          <td>${job.kind}</td>
-          <td>${badge(job.status, statusTone(job.status))}</td>
+          <td>${h(job.target_name || job.target_id)}</td>
+          <td>${h(job.kind)}</td>
+          <td>${badge(job.status, statusTone(job.status))}${job.last_error ? `<div class="list-meta">${h(job.last_error)}</div>` : ""}</td>
           <td>${job.priority}</td>
           <td>${job.progress}%</td>
           <td>${job.attempts}/${job.max_retries}</td>
-          <td>${fmtDate(job.created_at)}</td>
-          <td><button class="ghost job-details" data-job-id="${job.id}">Open report</button></td>
+          <td>${h(fmtDate(job.created_at))}</td>
+          <td>
+            <div class="table-actions">
+              <button class="ghost job-details" data-job-id="${job.id}">Open report</button>
+              ${job.status === "retry_pending" || job.status === "failed" ? `<button class="ghost job-requeue" data-job-id="${job.id}">Requeue</button>` : ""}
+              ${job.status !== "running" ? `<button class="ghost job-delete" data-job-id="${job.id}">Delete</button>` : ""}
+            </div>
+          </td>
         </tr>
       `
     )
@@ -398,6 +425,30 @@ function renderJobs(jobs) {
       loadJobReport(Number(button.dataset.jobId));
     });
   });
+  [...elements.jobTable.querySelectorAll(".job-requeue")].forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        await request(`/jobs/${button.dataset.jobId}/requeue`, { method: "POST" });
+        setHint(`Job #${button.dataset.jobId} requeued.`, "success");
+        await loadDashboard();
+      } catch (error) {
+        setHint(`Requeue failed: ${error.message}`, "danger");
+      }
+    });
+  });
+  [...elements.jobTable.querySelectorAll(".job-delete")].forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        await request(`/jobs/${button.dataset.jobId}`, { method: "DELETE" });
+        setHint(`Job #${button.dataset.jobId} deleted.`, "success");
+        await loadDashboard();
+      } catch (error) {
+        setHint(`Delete failed: ${error.message}`, "danger");
+      }
+    });
+  });
   [...elements.jobTable.querySelectorAll("tr[data-job-id]")].forEach((row) => {
     row.addEventListener("click", () => loadJobReport(Number(row.dataset.jobId)));
   });
@@ -406,20 +457,53 @@ function renderJobs(jobs) {
 function renderReport(report) {
   state.selectedReport = report;
   const stages = report.stages
-    .map((stage) => `<div class="list-item"><header><strong>${stage.name}</strong>${badge(stage.status, statusTone(stage.status))}</header><div class="list-meta">${stage.duration_ms} ms</div><div class="list-meta">${stage.logs || ""}</div></div>`)
+    .map(
+      (stage) => `
+        <div class="list-item">
+          <header><strong>${h(stage.name)}</strong>${badge(stage.status, statusTone(stage.status))}</header>
+          <div class="list-meta">${stage.duration_ms} ms • start ${h(fmtDate(stage.started_at))} • finish ${h(fmtDate(stage.finished_at))}</div>
+          <div class="list-meta">${h(stage.logs || "")}</div>
+        </div>
+      `
+    )
     .join("");
   const results = report.results
-    .slice(0, 10)
-    .map((result) => `<div class="list-item"><header><strong>${result.tool}</strong>${badge(result.fallback_used ? "fallback" : "native", result.fallback_used ? "warning" : "success")}</header><div class="list-meta">${result.stage} • exit ${result.exit_code}</div></div>`)
+    .slice(0, 20)
+    .map(
+      (result) => `
+        <div class="list-item">
+          <header><strong>${h(result.tool)}</strong>${badge(result.fallback_used ? "fallback" : "native", result.fallback_used ? "warning" : "success")}</header>
+          <div class="list-meta">${h(result.stage)} • exit ${result.exit_code}</div>
+          ${result.artifact?.command?.length ? `<div class="list-meta">Command: ${h(result.artifact.command.join(" "))}</div>` : ""}
+          ${result.stdout_sample ? `<pre>${h(result.stdout_sample)}</pre>` : ""}
+          ${result.stderr_sample ? `<pre>${h(result.stderr_sample)}</pre>` : ""}
+        </div>
+      `
+    )
     .join("");
   const topFindings = report.vulnerabilities
-    .slice(0, 8)
-    .map((item) => `<div class="list-item"><header><strong>${item.title}</strong>${badge(item.severity, severityTone(item.severity))}</header><div class="list-meta">${item.cve || "No CVE"} • EPSS ${item.epss} • risk ${item.risk_score}</div></div>`)
+    .slice(0, 20)
+    .map(
+      (item) => `
+        <div class="list-item">
+          <header><strong>${h(item.title)}</strong>${badge(item.severity, severityTone(item.severity))}</header>
+          <div class="list-meta">${h(item.cve || "No CVE")} • EPSS ${item.epss} • risk ${item.risk_score} • ${h(item.source)}</div>
+          <div class="list-meta">${h(item.host || "N/A")} • ${h(item.threat_context)} • ${h(item.exploit_maturity)}</div>
+        </div>
+      `
+    )
     .join("");
   elements.reportBody.innerHTML = `
     <section class="report-section">
-      <h3>${report.target.name} • Job #${report.job.id}</h3>
-      <p>Status: ${report.job.status} | ${report.summary.asset_count} assets | ${report.summary.vulnerability_count} findings | average EPSS ${report.summary.average_epss}</p>
+      <h3>${h(report.target.name)} • Job #${report.job.id}</h3>
+      <p>Status: ${h(report.job.status)} | ${report.summary.asset_count} scan assets | ${report.summary.inventory_asset_count || report.summary.asset_count} inventory assets | ${report.summary.vulnerability_count} findings | average EPSS ${report.summary.average_epss}</p>
+      ${report.summary.last_error ? `<p class="list-meta">Last error: ${h(report.summary.last_error)}</p>` : ""}
+      <div class="report-summary-grid">
+        <div class="summary-card"><div class="stat-label">Stages</div><div class="stat-value">${report.summary.stage_count}</div></div>
+        <div class="summary-card"><div class="stat-label">Tool results</div><div class="stat-value">${report.summary.tool_count}</div></div>
+        <div class="summary-card"><div class="stat-label">Fallback runs</div><div class="stat-value">${report.summary.fallback_count}</div></div>
+        <div class="summary-card"><div class="stat-label">SLA overdue</div><div class="stat-value">${report.summary.overdue_count}</div></div>
+      </div>
     </section>
     <section class="report-section">
       <h3>Stage timeline</h3>
@@ -435,7 +519,7 @@ function renderReport(report) {
     </section>
     <section class="report-section">
       <h3>Risk summary</h3>
-      <pre>${JSON.stringify(report.summary, null, 2)}</pre>
+      <pre>${safeJson(report.summary)}</pre>
     </section>
   `;
 }
@@ -446,7 +530,7 @@ function renderOperations(dashboard, automations, threatIntel, notifications) {
     dashboard.nodes,
     (item) => `
       <article class="list-item">
-        <header><strong>${item.node_name}</strong>${badge(item.status, statusTone(item.status))}</header>
+        <header><strong>${h(item.node_name)}</strong>${badge(item.status, statusTone(item.status))}</header>
         <div class="list-meta">load ${item.current_load}/${item.capacity} • cpu ${item.cpu_percent}% • mem ${item.memory_percent}% • disk ${item.disk_percent}%</div>
       </article>
     `,
@@ -457,8 +541,8 @@ function renderOperations(dashboard, automations, threatIntel, notifications) {
     automations,
     (item) => `
       <article class="list-item">
-        <header><strong>${item.name}</strong>${badge(item.enabled ? "enabled" : "disabled", item.enabled ? "success" : "warning")}</header>
-        <div class="list-meta">${item.event} -> ${item.action}</div>
+        <header><strong>${h(item.name)}</strong>${badge(item.enabled ? "enabled" : "disabled", item.enabled ? "success" : "warning")}</header>
+        <div class="list-meta">${h(item.event)} -> ${h(item.action)}</div>
       </article>
     `,
     "No automation rules configured."
@@ -468,8 +552,8 @@ function renderOperations(dashboard, automations, threatIntel, notifications) {
     threatIntel.items || [],
     (item) => `
       <article class="list-item">
-        <header><strong>${item.cve}</strong>${badge(item.kev ? "KEV" : "intel", item.kev ? "danger" : "info")}</header>
-        <div class="list-meta">CVSS ${item.cvss_v3} • EPSS ${item.epss} • ${item.exploit_maturity}</div>
+        <header><strong>${h(item.cve)}</strong>${badge(item.kev ? "KEV" : "intel", item.kev ? "danger" : "info")}</header>
+        <div class="list-meta">CVSS ${item.cvss_v3} • EPSS ${item.epss} • ${h(item.exploit_maturity)}</div>
       </article>
     `,
     "Threat intelligence records will appear once CVE-backed findings are stored."
@@ -479,8 +563,8 @@ function renderOperations(dashboard, automations, threatIntel, notifications) {
     notifications,
     (item) => `
       <article class="list-item">
-        <header><strong>${item.subject}</strong>${badge(item.severity, severityTone(item.severity))}</header>
-        <div class="list-meta">${item.channel} -> ${item.destination}</div>
+        <header><strong>${h(item.subject)}</strong>${badge(item.severity, severityTone(item.severity))}</header>
+        <div class="list-meta">${h(item.channel)} -> ${h(item.destination)}</div>
       </article>
     `,
     "No notifications queued."
@@ -576,8 +660,13 @@ async function searchTargets() {
     renderTargetTable(state.targets);
     return;
   }
-  const results = await request(`/targets/search?query=${encodeURIComponent(value)}`);
-  renderTargetTable(results);
+  try {
+    const results = await request(`/targets/search?query=${encodeURIComponent(value)}`);
+    renderTargetTable(results);
+    setHint(`Found ${results.length} target(s).`, "success");
+  } catch (error) {
+    setHint(`Target search failed: ${error.message}`, "danger");
+  }
 }
 
 async function searchJobs() {
@@ -586,12 +675,27 @@ async function searchJobs() {
     renderJobs(state.jobs);
     return;
   }
-  const results = await request(`/jobs/search?query=${encodeURIComponent(value)}`);
-  const hydrated = results.map((job) => ({
-    ...job,
-    target_name: state.targets.find((target) => target.id === job.target_id)?.name || `Target ${job.target_id}`,
-  }));
-  renderJobs(hydrated);
+  try {
+    const results = await request(`/jobs/search?query=${encodeURIComponent(value)}`);
+    const hydrated = results.map((job) => ({
+      ...job,
+      target_name: state.targets.find((target) => target.id === job.target_id)?.name || `Target ${job.target_id}`,
+    }));
+    renderJobs(hydrated);
+    setHint(`Found ${hydrated.length} job(s).`, "success");
+  } catch (error) {
+    setHint(`Job search failed: ${error.message}`, "danger");
+  }
+}
+
+async function recoverJobs() {
+  try {
+    const response = await request("/jobs/recover", { method: "POST" });
+    setHint(`Recovered ${response.recovered} stuck job(s).`, "success");
+    await loadDashboard();
+  } catch (error) {
+    setHint(`Recovery failed: ${error.message}`, "danger");
+  }
 }
 
 async function refreshIntelForSelected() {
@@ -630,9 +734,19 @@ function bindEvents() {
   elements.scanCreate.addEventListener("click", submitScan);
   elements.targetSearchBtn.addEventListener("click", searchTargets);
   elements.jobSearchBtn.addEventListener("click", searchJobs);
+  elements.recoverJobs.addEventListener("click", recoverJobs);
   elements.runIntel.addEventListener("click", () => refreshIntelForSelected().catch((error) => setHint(error.message, "danger")));
   elements.scanSelected.addEventListener("click", () => quickScanSelected().catch((error) => setHint(error.message, "danger")));
   elements.quickScan.addEventListener("click", () => quickScanSelected().catch((error) => setHint(error.message, "danger")));
+  elements.scanInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") submitScan();
+  });
+  elements.targetSearch.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") searchTargets();
+  });
+  elements.jobSearch.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") searchJobs();
+  });
   elements.useSelectedTarget.addEventListener("click", () => {
     if (!state.selectedTarget?.target) return;
     elements.scanInput.value = state.selectedTarget.target.name;

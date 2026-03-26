@@ -462,6 +462,18 @@ tbody tr:hover {
   gap: 0.45rem;
 }
 
+.list-item pre {
+  margin: 0;
+  padding: 0.75rem;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.28);
+  overflow: auto;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .list-item header {
   display: flex;
   justify-content: space-between;
@@ -524,11 +536,28 @@ tbody tr:hover {
   gap: 1rem;
 }
 
+.report-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
 .report-section {
   padding: 1rem;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.table-actions button {
+  padding: 0.65rem 0.9rem;
 }
 
 .report-section pre {
@@ -575,6 +604,7 @@ tbody tr:hover {
 
   .overview-grid,
   .summary-grid,
+  .report-summary-grid,
   .three-column,
   .two-column {
     grid-template-columns: 1fr;

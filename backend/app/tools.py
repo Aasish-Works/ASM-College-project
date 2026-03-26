@@ -10,6 +10,26 @@ from .config import settings
 
 COMMON_PORTS = [80, 443, 8080, 8443, 22]
 
+SCAN_PROFILES: dict[str, dict[str, list[str]]] = {
+    "full_scan": {
+        "intelligence": ["subfinder", "amass", "assetfinder", "puredns", "dnsx"],
+        "network": ["naabu", "masscan", "nmap"],
+        "web": ["httpx", "tlsx", "whatweb", "xingfinger", "wafw00f"],
+        "content": ["gau", "waybackurls", "waymore", "katana", "hakrawler", "ffuf", "dirsearch"],
+        "security": ["nuclei", "kxss", "dalfox", "nikto"],
+        "evidence": ["playwright"],
+    },
+    "continuous_monitoring": {
+        "intelligence": ["subfinder", "dnsx"],
+        "web": ["httpx", "tlsx", "whatweb", "wafw00f"],
+        "security": ["nuclei", "dalfox"],
+    },
+    "intelligence_refresh": {
+        "intelligence": ["subfinder", "amass", "assetfinder", "puredns", "dnsx"],
+        "web": ["httpx", "whatweb", "xingfinger"],
+    },
+}
+
 
 @dataclass(slots=True)
 class ToolResult:
@@ -160,12 +180,9 @@ def run_tool(tool: str, target: str, stage: str, timeout: int | None = None) -> 
     return ToolResult(tool, stage, "completed", 0, True, fallback_stdout, stderr, command)
 
 
-def stage_tool_plan() -> dict[str, list[str]]:
-    return {
-        "intelligence": ["subfinder", "amass", "assetfinder", "puredns", "dnsx"],
-        "network": ["naabu", "masscan", "nmap"],
-        "web": ["httpx", "tlsx", "whatweb", "xingfinger", "wafw00f"],
-        "content": ["gau", "waybackurls", "waymore", "katana", "hakrawler", "ffuf", "dirsearch"],
-        "security": ["nuclei", "kxss", "dalfox", "nikto"],
-        "evidence": ["playwright"],
-    }
+def stage_tool_plan(scan_kind: str = "full_scan") -> dict[str, list[str]]:
+    return SCAN_PROFILES.get(scan_kind, SCAN_PROFILES["full_scan"])
+
+
+def scan_profiles() -> dict[str, dict[str, list[str]]]:
+    return {name: plan.copy() for name, plan in SCAN_PROFILES.items()}

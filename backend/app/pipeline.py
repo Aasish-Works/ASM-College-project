@@ -408,14 +408,20 @@ def _deduplicate_streams(streams: list[RawAssetStream]) -> list[RawAssetStream]:
 def _deduplicate_vulns(vulnerabilities: list[dict[str, object]]) -> list[dict[str, object]]:
     best: dict[str, dict[str, object]] = {}
     for vuln in vulnerabilities:
-        fingerprint = str(vuln["fingerprint"])
+        fingerprint = str(
+            vuln.get("fingerprint")
+            or _fingerprint(
+                f"{vuln.get('host') or ''}|{vuln.get('port') or ''}|{vuln.get('source') or ''}|{vuln.get('title') or ''}|{vuln.get('cve') or ''}"
+            )
+        )
+        vuln["fingerprint"] = fingerprint
         existing = best.get(fingerprint)
         if existing is None or _severity_rank(str(vuln["severity"])) > _severity_rank(str(existing["severity"])):
             best[fingerprint] = vuln
     return list(best.values())
 
 
-def execute_scan_pipeline(target) -> PipelineResult:
+def execute_scan_pipeline(target, scan_kind: str = "full_scan") -> PipelineResult:
     result = PipelineResult()
     raw_logs: list[str] = []
 
@@ -435,7 +441,7 @@ def execute_scan_pipeline(target) -> PipelineResult:
         ).to_record()
     )
 
-    for stage, tools in stage_tool_plan().items():
+    for stage, tools in stage_tool_plan(scan_kind).items():
         stage_start = datetime.utcnow()
         stage_logs: list[str] = []
         for tool in tools:
@@ -502,6 +508,7 @@ def execute_scan_pipeline(target) -> PipelineResult:
     result.vulnerabilities = _deduplicate_vulns(result.vulnerabilities)
 
     summary = {
+        "scan_kind": scan_kind,
         "assets": len(result.streams),
         "vulnerabilities": len(result.vulnerabilities),
         "identities": len(result.identities),

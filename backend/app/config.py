@@ -16,8 +16,8 @@ class Settings:
     epss_csv_path: str = os.getenv("ASM_EPSS_CSV", "./data/epss.csv")
     kev_json_path: str = os.getenv("ASM_KEV_JSON", "./data/kev.json")
     exploitdb_csv_path: str = os.getenv("ASM_EXPLOITDB_CSV", "./data/exploitdb.csv")
-    native_tool_mode: str = os.getenv("ASM_NATIVE_TOOL_MODE", "auto").lower()
-    tool_timeout_seconds: int = int(os.getenv("ASM_TOOL_TIMEOUT", "12"))
+    native_tool_mode: str = os.getenv("ASM_NATIVE_TOOL_MODE", "fallback").lower()
+    tool_timeout_seconds: int = int(os.getenv("ASM_TOOL_TIMEOUT", "8"))
     cors_origins: list[str] = field(
         default_factory=lambda: _split_csv(
             os.getenv("ASM_CORS_ORIGINS"),

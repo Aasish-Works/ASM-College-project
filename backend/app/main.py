@@ -57,7 +57,7 @@ from .schemas import (
     VulnerabilityUpdate,
 )
 from .threat_intel import lookup_threat_context, refresh_threat_feeds
-from .tools import stage_tool_plan
+from .tools import scan_profiles, stage_tool_plan
 
 
 app = FastAPI(
@@ -111,6 +111,7 @@ def on_startup() -> None:
     ensure_default_automation_rules()
     db = SessionLocal()
     try:
+        _normalize_existing_targets(db)
         orchestrator.register_heartbeat(
             db,
             node_name=settings.local_node_name,
@@ -121,6 +122,7 @@ def on_startup() -> None:
             memory_percent=0.0,
             disk_percent=0.0,
         )
+        orchestrator.recover_stale_jobs(db)
         db.commit()
     finally:
         db.close()
@@ -154,6 +156,27 @@ def payload_dump(model) -> dict[str, object]:
     return model.dict(exclude_none=True)
 
 
+def _search_variants(value: str | None) -> list[str]:
+    raw = (value or "").strip().lower()
+    normalized = normalize_target_name(value or "")
+    return [item for item in dict.fromkeys([raw, normalized]) if item]
+
+
+def _normalize_existing_targets(db: Session) -> int:
+    repaired = 0
+    for target in db.query(Target).order_by(Target.id).all():
+        normalized = normalize_target_name(target.name)
+        if not normalized or normalized == target.name:
+            continue
+        duplicate = db.query(Target).filter(Target.name == normalized, Target.id != target.id).one_or_none()
+        if duplicate is not None:
+            continue
+        target.name = normalized
+        target.target_type = guess_target_type(normalized)
+        repaired += 1
+    return repaired
+
+
 def serialize_target(db: Session, target: Target) -> dict[str, object]:
     asset_count = db.query(Asset).filter(Asset.target_id == target.id).count()
     vuln_count = db.query(Vulnerability).filter(Vulnerability.target_id == target.id).count()
@@ -185,6 +208,7 @@ def serialize_target(db: Session, target: Target) -> dict[str, object]:
         "exposure_count": exposure_count,
         "identity_count": identity_count,
         "latest_job_status": latest_job.status if latest_job else None,
+        "latest_job_error": latest_job.last_error if latest_job else None,
     }
 
 
@@ -317,6 +341,48 @@ def serialize_result(result: ScanResult) -> dict[str, object]:
     }
 
 
+def project_job_stages(job: ScanJob) -> list[dict[str, object]]:
+    stage_names = list(stage_tool_plan(job.kind).keys())
+    if not stage_names:
+        return []
+    projected = [
+        {
+            "id": f"projected-scheduler-{job.id}",
+            "job_id": job.id,
+            "name": "scheduler",
+            "status": "completed" if job.status in {"running", "completed"} else job.status,
+            "started_at": job.created_at,
+            "finished_at": job.started_at if job.status in {"running", "completed"} else None,
+            "duration_ms": 0,
+            "logs": "Job accepted by the orchestrator queue.",
+        }
+    ]
+    for index, stage_name in enumerate(stage_names):
+        if job.status == "completed":
+            status = "completed"
+        elif job.status == "running" and index == 0:
+            status = "running"
+        elif job.status in {"queued", "retry_pending"} and index == 0:
+            status = job.status
+        else:
+            status = "pending"
+        projected.append(
+            {
+                "id": f"projected-{stage_name}-{job.id}",
+                "job_id": job.id,
+                "name": stage_name,
+                "status": status,
+                "started_at": job.started_at if status == "running" else None,
+                "finished_at": None,
+                "duration_ms": 0,
+                "logs": "Projected live stage while the pipeline is still executing."
+                if status in {"running", "queued", "retry_pending", "pending"}
+                else "",
+            }
+        )
+    return projected
+
+
 def serialize_node(node: ScannerNode) -> dict[str, object]:
     return {
         "id": node.id,
@@ -420,7 +486,12 @@ def target_report(db: Session, target: Target) -> dict[str, object]:
         .limit(30)
         .all()
     )
-    top_risk = sorted(vulnerabilities, key=lambda item: item.risk_score or 0.0, reverse=True)[:10]
+    sorted_vulnerabilities = sorted(
+        vulnerabilities,
+        key=lambda item: (item.risk_score or 0.0, item.epss or 0.0, item.created_at or datetime.min),
+        reverse=True,
+    )
+    top_risk = sorted_vulnerabilities[:10]
     epss_top = sorted(vulnerabilities, key=lambda item: item.epss or 0.0, reverse=True)[:5]
 
     return {
@@ -439,7 +510,8 @@ def target_report(db: Session, target: Target) -> dict[str, object]:
             "average_epss": round(sum(item.epss or 0.0 for item in vulnerabilities) / max(len(vulnerabilities), 1), 4),
         },
         "assets": [serialize_asset(asset) for asset in assets],
-        "vulnerabilities": [serialize_vulnerability(vulnerability) for vulnerability in top_risk],
+        "vulnerabilities": [serialize_vulnerability(vulnerability) for vulnerability in sorted_vulnerabilities[:200]],
+        "top_risk_vulnerabilities": [serialize_vulnerability(vulnerability) for vulnerability in top_risk],
         "identity_exposures": [serialize_identity(identity) for identity in identities],
         "graph": graph,
         "attack_paths": attack_paths,
@@ -483,12 +555,15 @@ def job_report(db: Session, job: ScanJob) -> dict[str, object]:
         .all()
     )
 
+    snapshot_summary = _json_load(snapshots[0].summary_json) if snapshots else {}
     severity_counts: dict[str, int] = {}
     exposure_counts: dict[str, int] = {}
     tech_counts: dict[str, int] = {}
+    source_counts: dict[str, int] = {}
     for vulnerability in vulnerabilities:
         severity_counts[vulnerability.severity] = severity_counts.get(vulnerability.severity, 0) + 1
         exposure_counts[vulnerability.exposure] = exposure_counts.get(vulnerability.exposure, 0) + 1
+        source_counts[vulnerability.source] = source_counts.get(vulnerability.source, 0) + 1
     for asset in assets:
         metadata = _json_load(asset.metadata_json) or {}
         for tech in metadata.get("tech", []):
@@ -499,21 +574,32 @@ def job_report(db: Session, job: ScanJob) -> dict[str, object]:
         for vulnerability in vulnerabilities
         if vulnerability.sla_due_at and vulnerability.sla_due_at < datetime.utcnow() and vulnerability.status != "resolved"
     ]
+    stage_payload = [serialize_stage(stage) for stage in stages] or project_job_stages(job)
+    planned_tools = [tool for tools in stage_tool_plan(job.kind).values() for tool in tools]
     return {
         "job": serialize_job(job),
         "target": serialize_target(db, target),
         "summary": {
-            "asset_count": len(assets),
+            "asset_count": snapshot_summary.get("assets", len(assets)),
+            "inventory_asset_count": len(assets),
             "vulnerability_count": len(vulnerabilities),
+            "last_error": job.last_error,
             "severity_counts": severity_counts,
             "exposure_counts": exposure_counts,
+            "source_counts": source_counts,
             "tech_counts": tech_counts,
             "overdue_count": len(overdue),
+            "stage_count": len(stage_payload),
+            "tool_count": len(results),
+            "fallback_count": sum(1 for item in results if item.fallback_used),
+            "planned_stages": list(stage_tool_plan(job.kind).keys()),
+            "planned_tools": planned_tools,
+            "snapshot_summary": snapshot_summary or {},
             "average_epss": round(sum(item.epss or 0.0 for item in vulnerabilities) / max(len(vulnerabilities), 1), 4),
             "max_epss": round(max((item.epss or 0.0) for item in vulnerabilities), 4) if vulnerabilities else 0.0,
             "top_epss": [serialize_vulnerability(item) for item in sorted(vulnerabilities, key=lambda row: row.epss or 0.0, reverse=True)[:5]],
         },
-        "stages": [serialize_stage(stage) for stage in stages],
+        "stages": stage_payload,
         "results": [serialize_result(result) for result in results],
         "vulnerabilities": [serialize_vulnerability(vulnerability) for vulnerability in vulnerabilities],
         "assets": [serialize_asset(asset) for asset in assets],
@@ -597,14 +683,18 @@ def create_target(payload: TargetCreate, db: Session = Depends(get_db)) -> dict[
 @app.get("/targets")
 def list_targets(q: str | None = None, db: Session = Depends(get_db)) -> list[dict[str, object]]:
     query = db.query(Target)
-    if q:
-        query = query.filter(Target.name.ilike(f"%{q.strip().lower()}%"))
+    variants = _search_variants(q)
+    if variants:
+        query = query.filter(or_(*[Target.name.ilike(f"%{term}%") for term in variants]))
     return [serialize_target(db, target) for target in query.order_by(desc(Target.updated_at)).all()]
 
 
 @app.get("/targets/search")
 def search_targets(query: str = Query(...), db: Session = Depends(get_db)) -> list[dict[str, object]]:
-    targets = db.query(Target).filter(Target.name.ilike(f"%{query.strip().lower()}%")).all()
+    variants = _search_variants(query)
+    if not variants:
+        return []
+    targets = db.query(Target).filter(or_(*[Target.name.ilike(f"%{term}%") for term in variants])).all()
     return [serialize_target(db, target) for target in targets]
 
 
@@ -736,6 +826,9 @@ def target_identities(target_id: int, db: Session = Depends(get_db)) -> dict[str
 
 @app.get("/targets/{target_id}/monitoring")
 def get_monitoring(target_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    target = db.query(Target).filter(Target.id == target_id).one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Target not found")
     rules = db.query(MonitoringRule).filter(MonitoringRule.target_id == target_id).order_by(MonitoringRule.id).all()
     return {"items": [serialize_monitoring(rule) for rule in rules]}
 
@@ -788,10 +881,13 @@ def list_jobs(status: str | None = None, db: Session = Depends(get_db)) -> list[
 
 @app.get("/jobs/search")
 def search_jobs(query: str = Query(...), db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    variants = _search_variants(query)
+    if not variants:
+        return []
     jobs = (
         db.query(ScanJob)
         .join(Target, Target.id == ScanJob.target_id)
-        .filter(Target.name.ilike(f"%{query.strip().lower()}%"))
+        .filter(or_(*[Target.name.ilike(f"%{term}%") for term in variants]))
         .order_by(desc(ScanJob.created_at))
         .all()
     )
@@ -804,6 +900,40 @@ def get_job(job_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"job": serialize_job(job)}
+
+
+@app.post("/jobs/{job_id}/requeue")
+def requeue_job(job_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    job = orchestrator.requeue_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    db.commit()
+    db.refresh(job)
+    return {"job": serialize_job(job)}
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    job = db.query(ScanJob).filter(ScanJob.id == job_id).one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status == "running":
+        raise HTTPException(status_code=409, detail="Running jobs cannot be deleted")
+    for vulnerability in db.query(Vulnerability).filter(Vulnerability.scan_job_id == job.id).all():
+        vulnerability.scan_job_id = None
+    db.query(ScanStage).filter(ScanStage.job_id == job.id).delete(synchronize_session=False)
+    db.query(ScanResult).filter(ScanResult.job_id == job.id).delete(synchronize_session=False)
+    db.query(AssetSnapshot).filter(AssetSnapshot.scan_job_id == job.id).delete(synchronize_session=False)
+    db.delete(job)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.post("/jobs/recover")
+def recover_jobs(db: Session = Depends(get_db)) -> dict[str, object]:
+    recovered = orchestrator.recover_stale_jobs(db)
+    db.commit()
+    return {"recovered": recovered}
 
 
 @app.get("/jobs/{job_id}/stages")
@@ -1165,7 +1295,7 @@ def stats(db: Session = Depends(get_db)) -> dict[str, object]:
         "targets": db.query(Target).count(),
         "assets": db.query(Asset).count(),
         "vulnerabilities": db.query(Vulnerability).count(),
-        "open_jobs": db.query(ScanJob).filter(ScanJob.status.in_(["queued", "running"])).count(),
+        "open_jobs": db.query(ScanJob).filter(ScanJob.status.in_(["queued", "running", "retry_pending"])).count(),
         "nodes": db.query(ScannerNode).count(),
         "identity_exposures": db.query(IdentityExposure).count(),
     }
@@ -1376,6 +1506,7 @@ def legacy_scanner_environment(db: Session = Depends(get_db)) -> dict[str, objec
     return {
         "nodes": [serialize_node(node) for node in db.query(ScannerNode).order_by(ScannerNode.node_name).all()],
         "tool_plan": stage_tool_plan(),
+        "scan_profiles": scan_profiles(),
         "worker_count": settings.worker_count,
         "scheduler_interval_seconds": settings.scheduler_interval_seconds,
     }

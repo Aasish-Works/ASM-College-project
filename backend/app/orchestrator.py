@@ -99,6 +99,19 @@ def _asset_lookup_by_host(asset_map: dict[str, Asset]) -> dict[str, Asset]:
     return lookup
 
 
+def _stable_fingerprint(vuln_data: dict[str, object]) -> str:
+    raw = "|".join(
+        [
+            str(vuln_data.get("host") or ""),
+            str(vuln_data.get("port") or ""),
+            str(vuln_data.get("source") or ""),
+            str(vuln_data.get("title") or ""),
+            str(vuln_data.get("cve") or ""),
+        ]
+    )
+    return raw
+
+
 class ASMOrchestrator:
     def __init__(self) -> None:
         self.queue: PriorityQueue[tuple[int, float, int]] = PriorityQueue()
@@ -327,9 +340,10 @@ class ASMOrchestrator:
 
         for vuln_data in result.vulnerabilities:
             asset = asset_lookup.get(str(vuln_data.get("host") or ""))
+            fingerprint = str(vuln_data.get("fingerprint") or _stable_fingerprint(vuln_data))
             existing = (
                 db.query(Vulnerability)
-                .filter(Vulnerability.fingerprint == str(vuln_data["fingerprint"]))
+                .filter(Vulnerability.fingerprint == fingerprint)
                 .one_or_none()
             )
             if existing is None:
@@ -337,7 +351,7 @@ class ASMOrchestrator:
                     target_id=job.target_id,
                     asset_id=asset.id if asset else None,
                     scan_job_id=job.id,
-                    fingerprint=str(vuln_data["fingerprint"]),
+                    fingerprint=fingerprint,
                     title=str(vuln_data["title"]),
                     description=str(vuln_data.get("description") or ""),
                     severity=str(vuln_data["severity"]),
@@ -485,7 +499,7 @@ class ASMOrchestrator:
         except Exception as exc:
             job.last_error = str(exc)
             if job.attempts <= job.max_retries:
-                job.status = "queued"
+                job.status = "retry_pending"
                 job.next_run_at = _now() + timedelta(minutes=2 ** job.attempts)
                 job.progress = 0.0
             else:

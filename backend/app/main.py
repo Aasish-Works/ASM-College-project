@@ -1312,6 +1312,33 @@ def legacy_reporting_portfolio(db: Session = Depends(get_db)) -> dict[str, objec
     }
 
 
+@app.get("/api/reporting/detailed")
+def legacy_reporting_detailed(limit: int = Query(200, ge=1, le=1000), db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    jobs = db.query(ScanJob).order_by(desc(ScanJob.created_at)).limit(limit).all()
+    payload: list[dict[str, object]] = []
+    for job in jobs:
+        target = db.query(Target).filter(Target.id == job.target_id).one_or_none()
+        stages = db.query(ScanStage).filter(ScanStage.job_id == job.id).order_by(ScanStage.id).all()
+        results = db.query(ScanResult).filter(ScanResult.job_id == job.id).order_by(ScanResult.id).all()
+        vulnerabilities = (
+            db.query(Vulnerability)
+            .filter(Vulnerability.scan_job_id == job.id)
+            .order_by(desc(Vulnerability.risk_score))
+            .limit(10)
+            .all()
+        )
+        payload.append(
+            {
+                "job": serialize_job(job),
+                "target": serialize_target(db, target) if target else {"id": job.target_id, "name": f"target-{job.target_id}"},
+                "stages": [serialize_stage(stage) for stage in stages],
+                "results": [serialize_result(result) for result in results[:20]],
+                "vulnerabilities": [serialize_vulnerability(vulnerability) for vulnerability in vulnerabilities],
+            }
+        )
+    return payload
+
+
 @app.get("/api/monitor-targets")
 def legacy_monitor_targets(db: Session = Depends(get_db)) -> list[dict[str, object]]:
     targets = db.query(Target).order_by(desc(Target.updated_at)).all()

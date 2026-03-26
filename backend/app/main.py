@@ -57,6 +57,7 @@ from .schemas import (
     VulnerabilityUpdate,
 )
 from .threat_intel import lookup_threat_context, refresh_threat_feeds
+from .tools import stage_tool_plan
 
 
 app = FastAPI(
@@ -1247,3 +1248,131 @@ def epss_lookup(cve: str = Query(...)) -> dict[str, object]:
 @app.post("/epss/refresh")
 def epss_refresh() -> dict[str, int | str]:
     return refresh_epss_cache()
+
+
+def _recent_reports_payload(db: Session, limit: int = 20) -> list[dict[str, object]]:
+    jobs = db.query(ScanJob).order_by(desc(ScanJob.created_at)).limit(limit).all()
+    payload: list[dict[str, object]] = []
+    for job in jobs:
+        target = db.query(Target).filter(Target.id == job.target_id).one_or_none()
+        vuln_count = db.query(Vulnerability).filter(Vulnerability.scan_job_id == job.id).count()
+        payload.append(
+            {
+                "id": job.id,
+                "job_id": job.id,
+                "target_id": job.target_id,
+                "target": target.name if target else f"target-{job.target_id}",
+                "kind": job.kind,
+                "status": job.status,
+                "priority": job.priority,
+                "progress": job.progress,
+                "vulnerability_count": vuln_count,
+                "created_at": job.created_at,
+                "updated_at": job.updated_at,
+            }
+        )
+    return payload
+
+
+@app.get("/api/version")
+def legacy_api_version() -> dict[str, object]:
+    return {
+        "name": "Enterprise ASM Platform",
+        "version": app.version,
+        "api_version": "compat-v1",
+        "status": "ok",
+    }
+
+
+@app.get("/api/summary")
+def legacy_api_summary(db: Session = Depends(get_db)) -> dict[str, object]:
+    board = dashboard(db)
+    return {
+        "stats": board["stats"],
+        "recent_targets": board["recent_targets"],
+        "recent_jobs": board["recent_jobs"],
+        "risk_heatmap": board["risk_heatmap"],
+        "trends": board["trends"],
+    }
+
+
+@app.get("/api/reports")
+def legacy_api_reports(limit: int = Query(20, ge=1, le=200), db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    return _recent_reports_payload(db, limit=limit)
+
+
+@app.get("/api/reporting/portfolio")
+def legacy_reporting_portfolio(db: Session = Depends(get_db)) -> dict[str, object]:
+    board = dashboard(db)
+    return {
+        "summary": board["stats"],
+        "trends": board["trends"],
+        "top_risky_assets": board["top_risky_assets"],
+        "trending_vulnerabilities": board["trending_vulnerabilities"],
+    }
+
+
+@app.get("/api/monitor-targets")
+def legacy_monitor_targets(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    targets = db.query(Target).order_by(desc(Target.updated_at)).all()
+    payload: list[dict[str, object]] = []
+    for target in targets:
+        rules = db.query(MonitoringRule).filter(MonitoringRule.target_id == target.id).all()
+        serialized = serialize_target(db, target)
+        serialized["monitoring_rules"] = [serialize_monitoring(rule) for rule in rules]
+        payload.append(serialized)
+    return payload
+
+
+@app.get("/api/automation")
+def legacy_automation(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    return list_automation(db)
+
+
+@app.get("/api/scanner-environment")
+def legacy_scanner_environment(db: Session = Depends(get_db)) -> dict[str, object]:
+    return {
+        "nodes": [serialize_node(node) for node in db.query(ScannerNode).order_by(ScannerNode.node_name).all()],
+        "tool_plan": stage_tool_plan(),
+        "worker_count": settings.worker_count,
+        "scheduler_interval_seconds": settings.scheduler_interval_seconds,
+    }
+
+
+@app.get("/api/exposures")
+def legacy_exposures(limit: int = Query(200, ge=1, le=1000), db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    vulnerabilities = (
+        db.query(Vulnerability)
+        .filter(or_(Vulnerability.source == "exposure_engine", Vulnerability.exposure != "internal"))
+        .order_by(desc(Vulnerability.risk_score))
+        .limit(limit)
+        .all()
+    )
+    return [serialize_vulnerability(vulnerability) for vulnerability in vulnerabilities]
+
+
+@app.get("/api/assets/by-url")
+def legacy_assets_by_url(limit: int = Query(200, ge=1, le=1000), db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    assets = (
+        db.query(Asset)
+        .filter(Asset.kind.in_(["application", "domain", "service"]))
+        .order_by(desc(Asset.risk_score), Asset.value)
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": asset.id,
+            "target_id": asset.target_id,
+            "url": asset.value if asset.kind == "application" else None,
+            "host": asset.host or asset.value,
+            "kind": asset.kind,
+            "title": asset.title,
+            "exposure": asset.exposure,
+            "classification": asset.classification,
+            "risk_score": asset.risk_score,
+            "status_code": asset.status_code,
+            "tech": _json_load(asset.tech_stack) or [],
+        }
+        for asset in assets
+    ]

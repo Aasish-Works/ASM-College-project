@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Enterprise ASM Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">A</div>
+          <div>
+            <div class="brand-title">Aegis ASM</div>
+            <div class="brand-subtitle">Enterprise attack surface intelligence</div>
+          </div>
+        </div>
+        <nav class="nav">
+          <a href="#overview">Overview</a>
+          <a href="#inventory">Inventory</a>
+          <a href="#intelligence">Target Intel</a>
+          <a href="#jobs">Scan Jobs</a>
+          <a href="#reporting">Reporting</a>
+          <a href="#operations">Operations</a>
+        </nav>
+        <div class="sidebar-block">
+          <h3>API</h3>
+          <label class="stacked">
+            <span>Backend URL</span>
+            <input id="apiBaseInput" type="text" value="http://127.0.0.1:8000" />
+          </label>
+          <button id="saveApiBase" class="ghost">Save</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1>Enterprise Attack Surface Management</h1>
+            <p>Multi-source intelligence, contextual risk, attack path analysis, and continuous monitoring.</p>
+          </div>
+          <div class="topbar-actions">
+            <button id="refreshAll" class="ghost">Refresh</button>
+            <button id="quickScan" class="primary">Quick scan selected target</button>
+          </div>
+        </header>
+
+        <section class="command-panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Scan a new domain, IP, or CIDR</h2>
+              <p>Register a target, queue a full scan, and start continuous monitoring.</p>
+            </div>
+            <button id="useSelectedTarget" class="ghost">Use selected target</button>
+          </div>
+          <div class="command-grid">
+            <label class="stacked wide">
+              <span>Domain / IP / CIDR</span>
+              <input id="scanInput" type="text" placeholder="example.com or 203.0.113.10 or 203.0.113.0/24" />
+            </label>
+            <label class="stacked">
+              <span>Scope</span>
+              <input id="scanScope" type="text" placeholder="Subs, IP range, cloud tags" />
+            </label>
+            <label class="stacked">
+              <span>Type</span>
+              <select id="scanTargetType">
+                <option value="domain">Domain</option>
+                <option value="ip">IP</option>
+                <option value="cidr">CIDR</option>
+              </select>
+            </label>
+            <label class="stacked">
+              <span>Criticality</span>
+              <select id="scanCriticality">
+                <option value="5">Critical</option>
+                <option value="4">High</option>
+                <option value="3" selected>Medium</option>
+                <option value="2">Low</option>
+                <option value="1">Informational</option>
+              </select>
+            </label>
+            <label class="stacked">
+              <span>Priority</span>
+              <select id="scanPriority">
+                <option value="1">P1</option>
+                <option value="2">P2</option>
+                <option value="3" selected>P3</option>
+                <option value="4">P4</option>
+                <option value="5">P5</option>
+              </select>
+            </label>
+            <div class="stacked action-cell">
+              <span>&nbsp;</span>
+              <button id="scanCreate" class="primary">Create or scan</button>
+            </div>
+          </div>
+          <div id="scanHint" class="hint">No active action.</div>
+        </section>
+
+        <section id="overview" class="panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Overview</h2>
+              <p>Platform health, risk posture, and trend analytics.</p>
+            </div>
+          </div>
+          <div id="overviewCards" class="overview-grid"></div>
+          <div class="two-column">
+            <div class="subpanel">
+              <div class="subpanel-header">
+                <h3>Attack surface trend</h3>
+                <span>Assets, findings, and scans over the last 7 days</span>
+              </div>
+              <div id="trendChart" class="chart chart-lines"></div>
+            </div>
+            <div class="subpanel">
+              <div class="subpanel-header">
+                <h3>Risk heatmap</h3>
+                <span>Severity vs exposure context</span>
+              </div>
+              <div id="riskHeatmap" class="heatmap"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="inventory" class="panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Target inventory</h2>
+              <p>Search for a particular domain and open its intelligence view.</p>
+            </div>
+            <div class="toolbar">
+              <input id="targetSearch" type="text" placeholder="Search registered domains or IPs" />
+              <button id="targetSearchBtn" class="ghost">Search</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Target</th>
+                  <th>Type</th>
+                  <th>Assets</th>
+                  <th>Findings</th>
+                  <th>Exposure</th>
+                  <th>Identities</th>
+                  <th>Criticality</th>
+                  <th>Latest scan</th>
+                </tr>
+              </thead>
+              <tbody id="targetTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="intelligence" class="panel">
+          <div class="panel-title-row">
+            <div>
+              <h2 id="selectedTargetTitle">Target intelligence</h2>
+              <p id="selectedTargetSubtitle">Select a target to load graph, exposures, identities, attack paths, and detailed evidence.</p>
+            </div>
+            <div class="toolbar">
+              <button id="runIntel" class="ghost">Refresh intelligence</button>
+              <button id="scanSelected" class="primary">Scan selected</button>
+            </div>
+          </div>
+          <div id="targetSummary" class="summary-grid"></div>
+          <div class="two-column">
+            <div class="subpanel">
+              <div class="subpanel-header">
+                <h3>Asset graph</h3>
+                <span>Domain, IP, service, application, and identity relationships</span>
+              </div>
+              <svg id="graphCanvas" class="graph" viewBox="0 0 800 420"></svg>
+            </div>
+            <div class="subpanel">
+              <div class="subpanel-header">
+                <h3>Attack paths</h3>
+                <span>External entry points to high-value assets</span>
+              </div>
+              <div id="attackPaths" class="attack-paths"></div>
+            </div>
+          </div>
+          <div class="three-column">
+            <div class="subpanel">
+              <div class="subpanel-header"><h3>Assets</h3><span>Normalized and correlated inventory</span></div>
+              <div id="assetList" class="list-panel"></div>
+            </div>
+            <div class="subpanel">
+              <div class="subpanel-header"><h3>Exposure findings</h3><span>Misconfiguration and exposure posture</span></div>
+              <div id="exposureList" class="list-panel"></div>
+            </div>
+            <div class="subpanel">
+              <div class="subpanel-header"><h3>Identity exposure</h3><span>Credentials, API keys, and privilege paths</span></div>
+              <div id="identityList" class="list-panel"></div>
+            </div>
+          </div>
+          <div class="two-column">
+            <div class="subpanel">
+              <div class="subpanel-header"><h3>Vulnerabilities</h3><span>Top risk-ranked findings with EPSS and context</span></div>
+              <div id="vulnerabilityList" class="list-panel"></div>
+            </div>
+            <div class="subpanel">
+              <div class="subpanel-header"><h3>Monitoring and raw intelligence</h3><span>Scheduled coverage and source observations</span></div>
+              <div id="monitoringList" class="list-panel short"></div>
+              <div id="rawStreamList" class="list-panel"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="jobs" class="panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Scan jobs</h2>
+              <p>Search for jobs by target and open detailed reports.</p>
+            </div>
+            <div class="toolbar">
+              <input id="jobSearch" type="text" placeholder="Search jobs by domain" />
+              <button id="jobSearchBtn" class="ghost">Search</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Target</th>
+                  <th>Kind</th>
+                  <th>Status</th>
+                  <th>Priority</th>
+                  <th>Progress</th>
+                  <th>Attempts</th>
+                  <th>Created</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="jobTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="reporting" class="panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Detailed reporting</h2>
+              <p>Click a job to open full scan evidence, EPSS-backed prioritization, stage logs, and tool output.</p>
+            </div>
+          </div>
+          <div id="reportBody" class="report-grid"></div>
+        </section>
+
+        <section id="operations" class="panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Operations</h2>
+              <p>Workers, automation, threat intelligence, and notification status.</p>
+            </div>
+          </div>
+          <div class="three-column">
+            <div class="subpanel">
+              <div class="subpanel-header"><h3>Scanner nodes</h3><span>Heartbeat, load, and capacity</span></div>
+              <div id="nodeList" class="list-panel"></div>
+            </div>
+            <div class="subpanel">
+              <div class="subpanel-header"><h3>Automation rules</h3><span>Event-driven and scheduled workflow actions</span></div>
+              <div id="automationList" class="list-panel"></div>
+            </div>
+            <div class="subpanel">
+              <div class="subpanel-header"><h3>Threat intelligence</h3><span>CVSS, EPSS, KEV, and exploit context</span></div>
+              <div id="threatIntelList" class="list-panel"></div>
+            </div>
+          </div>
+          <div class="subpanel">
+            <div class="subpanel-header"><h3>Notifications</h3><span>Queued operational alerts and platform messages</span></div>
+            <div id="notificationList" class="list-panel"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="detailDialog" class="detail-dialog">
+      <div class="detail-header">
+        <h3 id="detailTitle">Details</h3>
+        <button id="closeDetail" class="ghost">Close</button>
+      </div>
+      <div id="detailContent" class="detail-content"></div>
+    </dialog>
+
+    <script src="./app.js"></script>
+  </body>
+  </html>

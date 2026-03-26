@@ -109,6 +109,21 @@ def ensure_default_automation_rules() -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     ensure_default_automation_rules()
+    db = SessionLocal()
+    try:
+        orchestrator.register_heartbeat(
+            db,
+            node_name=settings.local_node_name,
+            capabilities=["nuclei", "nmap", "httpx", "correlation", "graph"],
+            current_load=0,
+            capacity=settings.worker_count * 2,
+            cpu_percent=0.0,
+            memory_percent=0.0,
+            disk_percent=0.0,
+        )
+        db.commit()
+    finally:
+        db.close()
     orchestrator.start()
 
 
@@ -305,7 +320,7 @@ def serialize_result(result: ScanResult) -> dict[str, object]:
 def serialize_node(node: ScannerNode) -> dict[str, object]:
     return {
         "id": node.id,
-        "node_name": node.node_name,
+        "node_name": node.node_name or node.name,
         "status": node.status,
         "capabilities": _json_load(node.capabilities_json) or [],
         "current_load": node.current_load,

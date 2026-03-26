@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from ipaddress import ip_address, ip_network
 from typing import Iterable
+from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
@@ -84,7 +85,12 @@ class RawIdentityExposure:
 
 
 def normalize_target_name(value: str) -> str:
-    return (value or "").strip().lower()
+    normalized = (value or "").strip().lower()
+    if normalized.startswith(("http://", "https://")):
+        parsed = urlparse(normalized)
+        normalized = parsed.netloc or parsed.path or normalized
+    normalized = normalized.strip().strip("/")
+    return normalized
 
 
 def guess_target_type(value: str) -> str:

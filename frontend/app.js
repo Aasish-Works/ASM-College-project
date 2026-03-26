@@ -5,6 +5,7 @@ const state = {
   jobs: [],
   selectedTarget: null,
   selectedReport: null,
+  pollHandle: null,
 };
 
 const elements = {
@@ -526,6 +527,20 @@ async function loadJobReport(jobId) {
   document.getElementById("reporting").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+async function pollData() {
+  try {
+    await loadDashboard();
+    if (state.selectedTarget?.target?.id) {
+      await loadTargetIntel(state.selectedTarget.target.id);
+    }
+    if (state.selectedReport?.job?.id) {
+      await loadJobReport(state.selectedReport.job.id);
+    }
+  } catch (error) {
+    setHint(`Background refresh failed: ${error.message}`, "warning");
+  }
+}
+
 async function submitScan() {
   const name = elements.scanInput.value.trim();
   if (!name) {
@@ -634,6 +649,13 @@ async function init() {
   try {
     await loadDashboard();
     setHint("Platform data loaded.", "success");
+    if (!state.pollHandle) {
+      state.pollHandle = window.setInterval(() => {
+        if (document.visibilityState === "visible") {
+          pollData();
+        }
+      }, 8000);
+    }
   } catch (error) {
     setHint(`Unable to reach backend: ${error.message}`, "danger");
   }

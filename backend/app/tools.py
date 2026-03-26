@@ -5,6 +5,8 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
+from .config import settings
+
 
 COMMON_PORTS = [80, 443, 8080, 8443, 22]
 
@@ -120,16 +122,26 @@ def _default_command(tool: str, target: str) -> list[str]:
     return commands.get(tool, [tool, target])
 
 
-def run_tool(tool: str, target: str, stage: str, timeout: int = 120) -> ToolResult:
+def _use_native(binary: str) -> bool:
+    mode = settings.native_tool_mode
+    if mode == "fallback":
+        return False
+    if mode == "native":
+        return shutil.which(binary) is not None
+    return shutil.which(binary) is not None
+
+
+def run_tool(tool: str, target: str, stage: str, timeout: int | None = None) -> ToolResult:
     command = _default_command(tool, target)
     binary = command[0]
-    if shutil.which(binary):
+    timeout_seconds = timeout or settings.tool_timeout_seconds
+    if _use_native(binary):
         try:
             completed = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
-                timeout=timeout,
+                timeout=timeout_seconds,
                 check=False,
             )
             status = "completed" if completed.returncode == 0 else "error"
@@ -142,7 +154,7 @@ def run_tool(tool: str, target: str, stage: str, timeout: int = 120) -> ToolResu
         else:
             stderr = stderr or "Tool returned no output"
     else:
-        stderr = "Binary unavailable; fallback mode used"
+        stderr = f"Native tool disabled or unavailable; fallback mode used ({settings.native_tool_mode})"
 
     fallback_stdout = _fallback_output(tool, target)
     return ToolResult(tool, stage, "completed", 0, True, fallback_stdout, stderr, command)

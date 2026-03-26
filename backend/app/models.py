@@ -157,6 +157,7 @@ class ScannerNode(Base, TimestampMixin):
     __tablename__ = "scanner_nodes"
 
     id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=True)
     node_name = Column(String(255), unique=True, nullable=False)
     status = Column(String(64), default="online", nullable=False)
     capabilities_json = Column(Text, nullable=True)

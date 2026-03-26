@@ -6,6 +6,7 @@ import threading
 from datetime import datetime, timedelta
 from queue import Empty, PriorityQueue
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -188,10 +189,12 @@ class ASMOrchestrator:
         memory_percent: float,
         disk_percent: float,
     ) -> ScannerNode:
-        node = db.query(ScannerNode).filter(ScannerNode.node_name == node_name).one_or_none()
+        node = db.query(ScannerNode).filter(or_(ScannerNode.node_name == node_name, ScannerNode.name == node_name)).one_or_none()
         if node is None:
             node = ScannerNode(node_name=node_name)
             db.add(node)
+        node.name = node_name
+        node.node_name = node_name
         node.capabilities_json = _json_dumps(capabilities)
         node.current_load = current_load
         node.capacity = capacity
@@ -460,6 +463,9 @@ class ASMOrchestrator:
         job.attempts += 1
         job.worker_hint = worker_name
         db.flush()
+        db.commit()
+        job = db.query(ScanJob).filter(ScanJob.id == job_id).one()
+        target = db.query(Target).filter(Target.id == job.target_id).one()
 
         try:
             result = execute_scan_pipeline(target)

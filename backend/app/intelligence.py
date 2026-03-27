@@ -109,11 +109,16 @@ def guess_target_type(value: str) -> str:
     return "domain"
 
 
-def try_resolve_ips(host: str) -> list[str]:
+def try_resolve_ips(host: str, timeout: float = 3.0) -> list[str]:
+    """Resolve hostname to IPs with timeout protection."""
+    import socket as sock
+    sock.setdefaulttimeout(timeout)
     try:
-        return list(dict.fromkeys(socket.gethostbyname_ex(host)[2]))
+        return list(dict.fromkeys(sock.gethostbyname_ex(host)[2]))
     except Exception:
         return []
+    finally:
+        sock.setdefaulttimeout(None)
 
 
 def _target_root(name: str) -> str:

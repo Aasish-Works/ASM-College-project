@@ -42,6 +42,7 @@ const elements = {
   scanSelected: document.getElementById("scanSelected"),
   recoverJobs: document.getElementById("recoverJobs"),
   cleanupJobs: document.getElementById("cleanupJobs"),
+  resetData: document.getElementById("resetData"),
   jobSearch: document.getElementById("jobSearch"),
   jobSearchBtn: document.getElementById("jobSearchBtn"),
   jobTable: document.getElementById("jobTable"),
@@ -332,6 +333,26 @@ function renderList(container, items, formatter, emptyMessage) {
     return;
   }
   container.innerHTML = items.map(formatter).join("");
+}
+
+function clearTargetIntel() {
+  state.selectedTarget = null;
+  elements.selectedTargetTitle.textContent = "Target intelligence";
+  elements.selectedTargetSubtitle.textContent = "Select a target to load graph, exposures, identities, attack paths, and detailed evidence.";
+  elements.targetSummary.innerHTML = "";
+  renderGraph({ nodes: [], edges: [] });
+  renderList(elements.attackPaths, [], () => "", "No attack paths generated yet.");
+  renderList(elements.assetList, [], () => "", "No assets for this target.");
+  renderList(elements.exposureList, [], () => "", "No exposure findings.");
+  renderList(elements.identityList, [], () => "", "No identity exposure observed.");
+  renderList(elements.vulnerabilityList, [], () => "", "No vulnerabilities for this target.");
+  renderList(elements.monitoringList, [], () => "", "No monitoring rules configured.");
+  renderList(elements.rawStreamList, [], () => "", "No raw intelligence observations.");
+}
+
+function clearReport() {
+  state.selectedReport = null;
+  elements.reportBody.innerHTML = `<div class="list-meta">Click a job to open full scan evidence, EPSS-backed prioritization, stage logs, and tool output.</div>`;
 }
 
 function renderGraph(graph) {
@@ -641,12 +662,20 @@ async function loadDashboard() {
     ...job,
     target_name: targets.find((target) => target.id === job.target_id)?.name || `Target ${job.target_id}`,
   }));
+  const hasSelectedTarget = state.selectedTarget?.target?.id && state.targets.some((target) => target.id === state.selectedTarget.target.id);
+  const hasSelectedReport = state.selectedReport?.job?.id && state.jobs.some((job) => job.id === state.selectedReport.job.id);
   renderOverviewCards(dashboard);
   renderTrendChart(dashboard.trends || []);
   renderHeatmap(dashboard.risk_heatmap || {});
   renderTargetTable(state.targets);
   renderJobs(state.jobs);
   renderOperations(dashboard, automations, threatIntel, notifications);
+  if (!hasSelectedTarget) {
+    clearTargetIntel();
+  }
+  if (!hasSelectedReport) {
+    clearReport();
+  }
   if (!state.selectedTarget && state.targets.length) {
     await loadTargetIntel(state.targets[0].id);
   }
@@ -766,6 +795,31 @@ async function cleanupJobs() {
   }
 }
 
+async function resetPlatformData() {
+  const confirmed = window.confirm(
+    "Reset all saved ASM data? This will remove targets, jobs, findings, reports, nodes, notifications, and monitoring history from the local app database."
+  );
+  if (!confirmed) {
+    return;
+  }
+  try {
+    const response = await request("/system/reset-data", { method: "POST" });
+    state.targets = [];
+    state.jobs = [];
+    clearTargetIntel();
+    clearReport();
+    elements.targetTable.innerHTML = "";
+    elements.jobTable.innerHTML = "";
+    await loadDashboard();
+    setHint(
+      `Platform reset complete. Removed ${response.deleted.targets} target(s), ${response.deleted.jobs} job(s), ${response.deleted.assets} asset(s), and ${response.deleted.vulnerabilities} finding(s).`,
+      "success"
+    );
+  } catch (error) {
+    setHint(`Reset failed: ${error.message}`, "danger");
+  }
+}
+
 async function refreshIntelForSelected() {
   if (!state.selectedTarget?.target?.id) {
     setHint("Select a target before requesting intelligence refresh.", "warning");
@@ -804,6 +858,7 @@ function bindEvents() {
   elements.jobSearchBtn.addEventListener("click", searchJobs);
   elements.recoverJobs.addEventListener("click", recoverJobs);
   elements.cleanupJobs.addEventListener("click", cleanupJobs);
+  elements.resetData.addEventListener("click", resetPlatformData);
   elements.runIntel.addEventListener("click", () => refreshIntelForSelected().catch((error) => setHint(error.message, "danger")));
   elements.scanSelected.addEventListener("click", () => quickScanSelected().catch((error) => setHint(error.message, "danger")));
   elements.quickScan.addEventListener("click", () => quickScanSelected().catch((error) => setHint(error.message, "danger")));
@@ -829,6 +884,8 @@ function bindEvents() {
 
 async function init() {
   bindEvents();
+  clearTargetIntel();
+  clearReport();
   try {
     await loadDashboard();
     setHint("Platform data loaded.", "success");

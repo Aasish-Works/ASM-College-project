@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import desc, or_
+from sqlalchemy import desc, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -656,6 +656,65 @@ def _delete_job_related_records(db: Session, job: ScanJob) -> None:
     db.query(AssetSnapshot).filter(AssetSnapshot.scan_job_id == job.id).delete(synchronize_session=False)
 
 
+def _reset_all_platform_data(db: Session) -> dict[str, int]:
+    summary = {
+        "targets": db.query(Target).count(),
+        "jobs": db.query(ScanJob).count(),
+        "assets": db.query(Asset).count(),
+        "vulnerabilities": db.query(Vulnerability).count(),
+        "identities": db.query(IdentityExposure).count(),
+    }
+
+    orchestrator.stop()
+    with orchestrator.lock:
+        orchestrator.pending_job_ids.clear()
+        orchestrator.queue = type(orchestrator.queue)()
+
+    try:
+        db.rollback()
+        runtime_models = [
+            ExceptionRequest,
+            Ticket,
+            Vulnerability,
+            ScanResult,
+            ScanStage,
+            AssetSnapshot,
+            AssetRelationship,
+            AssetSourceEvent,
+            IdentityExposure,
+            MonitoringRule,
+            Notification,
+            ThreatIntelRecord,
+            ScanJob,
+            Asset,
+            ScannerNode,
+            Target,
+        ]
+        for model in runtime_models:
+            db.query(model).delete(synchronize_session=False)
+        if settings.database_url.startswith("sqlite"):
+            try:
+                db.execute(text("DELETE FROM sqlite_sequence"))
+            except Exception:
+                pass
+        db.commit()
+        ensure_default_automation_rules()
+        orchestrator.register_heartbeat(
+            db,
+            node_name=settings.local_node_name,
+            capabilities=["nuclei", "nmap", "httpx", "correlation", "graph"],
+            current_load=0,
+            capacity=settings.worker_count * 2,
+            cpu_percent=0.0,
+            memory_percent=0.0,
+            disk_percent=0.0,
+        )
+        db.commit()
+        return summary
+    finally:
+        orchestrator.start()
+
+
 @app.get("/")
 def root() -> dict[str, object]:
     return {"name": "Enterprise ASM Platform", "status": "ok", "docs": "/docs", "health": "/health", "dashboard": "/dashboard"}
@@ -1021,6 +1080,12 @@ def recover_jobs(db: Session = Depends(get_db)) -> dict[str, object]:
     recovered = orchestrator.recover_stale_jobs(db)
     db.commit()
     return {"recovered": recovered}
+
+
+@app.post("/system/reset-data")
+def reset_platform_data(db: Session = Depends(get_db)) -> dict[str, object]:
+    deleted = _reset_all_platform_data(db)
+    return {"reset": True, "deleted": deleted, "message": "Platform data reset. EPSS files and code were preserved."}
 
 
 @app.get("/jobs/{job_id}/stages")

@@ -390,6 +390,13 @@ class ASMOrchestrator:
             )
 
         for tool_result in result.tool_results:
+            payload = {
+                "command": tool_result.get("command"),
+                "stdout": str(tool_result.get("stdout") or "")[:4000],
+                "stderr": str(tool_result.get("stderr") or "")[:4000],
+                "fallback_used": bool(tool_result["fallback_used"]),
+                "exit_code": int(tool_result["exit_code"]),
+            }
             db.add(
                 ScanResult(
                     job_id=job.id,
@@ -400,6 +407,7 @@ class ASMOrchestrator:
                     fallback_used=bool(tool_result["fallback_used"]),
                     stdout_sample=str(tool_result.get("stdout") or "")[:4000],
                     stderr_sample=str(tool_result.get("stderr") or "")[:4000],
+                    payload=_json_dumps(payload),
                     artifact_json=_json_dumps({"command": tool_result.get("command")}),
                 )
             )
@@ -566,6 +574,11 @@ class ASMOrchestrator:
             self._run_automations(db, job, persisted_vulnerabilities)
             simulate_attack_paths(db, target.id)
         except Exception as exc:
+            db.rollback()
+            job = db.query(ScanJob).filter(ScanJob.id == job_id).one_or_none()
+            if job is None:
+                logger.exception("Job processing failed and job could not be reloaded for job_id=%s", job_id)
+                return
             job.last_error = str(exc)
             if job.attempts <= job.max_retries:
                 job.status = "retry_pending"
@@ -577,7 +590,11 @@ class ASMOrchestrator:
                 job.finished_at = _now()
             logger.exception("Job processing failed for job_id=%s", job.id)
         finally:
-            node = db.query(ScannerNode).filter(or_(ScannerNode.node_name == worker_name, ScannerNode.name == worker_name)).one_or_none()
+            try:
+                node = db.query(ScannerNode).filter(or_(ScannerNode.node_name == worker_name, ScannerNode.name == worker_name)).one_or_none()
+            except Exception:
+                db.rollback()
+                node = db.query(ScannerNode).filter(or_(ScannerNode.node_name == worker_name, ScannerNode.name == worker_name)).one_or_none()
             if node is not None:
                 node.current_load = 0
                 node.last_heartbeat = _now()

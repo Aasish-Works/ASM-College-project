@@ -308,16 +308,30 @@ def _vulnerability_payload(
     details: dict[str, object] | None = None,
 ) -> dict[str, object]:
     enrichment = enrich_vulnerability(cve, severity, title, description)
-    risk = compute_enterprise_risk(
-        cvss=float(enrichment["cvss"]),
-        epss=float(enrichment["epss"]),
-        exploit_maturity=str(enrichment["exploit_maturity"]),
-        exposure=exposure,
-        asset_criticality=business_criticality,
-        threat_context=str(enrichment["threat_context"]),
-        first_seen=datetime.utcnow(),
-        last_seen=datetime.utcnow(),
-    )
+    details_payload = {
+        **(details or {}),
+        "references": enrichment["references"],
+        "cvss_source": enrichment["cvss_source"],
+        "epss_source": enrichment["epss_source"],
+        "evidence_mode": enrichment["evidence_mode"],
+    }
+    if enrichment["evidence_mode"] == "facts_only":
+        risk_score = 0.0
+        risk_factors: dict[str, float] = {}
+    else:
+        risk = compute_enterprise_risk(
+            cvss=float(enrichment["cvss"]),
+            epss=float(enrichment["epss"]),
+            exploit_maturity=str(enrichment["exploit_maturity"]),
+            exposure=exposure,
+            asset_criticality=business_criticality,
+            threat_context=str(enrichment["threat_context"]),
+            first_seen=datetime.utcnow(),
+            last_seen=datetime.utcnow(),
+        )
+        risk_score = risk["score"]
+        risk_factors = risk["factors"]
+        details_payload["risk"] = risk
     return {
         "fingerprint": _fingerprint(f"{host}|{port}|{source}|{title}|{cve or ''}"),
         "title": title,
@@ -335,13 +349,9 @@ def _vulnerability_payload(
         "threat_context": enrichment["threat_context"],
         "kev": enrichment["kev"],
         "ransomware": enrichment["ransomware"],
-        "risk_score": risk["score"],
-        "risk_factors": risk["factors"],
-        "details": {
-            **(details or {}),
-            "references": enrichment["references"],
-            "risk": risk,
-        },
+        "risk_score": risk_score,
+        "risk_factors": risk_factors,
+        "details": details_payload,
     }
 
 

@@ -238,6 +238,8 @@ def serialize_asset(asset: Asset) -> dict[str, object]:
 
 
 def serialize_vulnerability(vulnerability: Vulnerability) -> dict[str, object]:
+    details = _json_load(vulnerability.details_json) or {}
+    facts_only = bool(details.get("evidence_mode") == "facts_only" or (not vulnerability.cve and vulnerability.source == "exposure_engine"))
     return {
         "id": vulnerability.id,
         "target_id": vulnerability.target_id,
@@ -261,7 +263,9 @@ def serialize_vulnerability(vulnerability: Vulnerability) -> dict[str, object]:
         "kev": vulnerability.kev,
         "ransomware": vulnerability.ransomware,
         "risk_score": vulnerability.risk_score,
-        "details": _json_load(vulnerability.details_json) or {},
+        "details": details,
+        "facts_only": facts_only,
+        "epss_available": bool(vulnerability.cve and details.get("epss_source") == "epss"),
         "assigned_to": vulnerability.assigned_to,
         "notes": vulnerability.notes,
         "first_seen": vulnerability.first_seen,
@@ -287,6 +291,34 @@ def serialize_vulnerability(vulnerability: Vulnerability) -> dict[str, object]:
             for exception in vulnerability.exceptions
         ],
     }
+
+
+def _cve_backed_findings(vulnerabilities: list[Vulnerability]) -> list[Vulnerability]:
+    return [item for item in vulnerabilities if item.cve]
+
+
+def _average_risk(vulnerabilities: list[Vulnerability]) -> float:
+    scored = _cve_backed_findings(vulnerabilities)
+    if not scored:
+        return 0.0
+    return round(sum(item.risk_score or 0.0 for item in scored) / len(scored), 2)
+
+
+def _max_risk(vulnerabilities: list[Vulnerability]) -> float:
+    scored = _cve_backed_findings(vulnerabilities)
+    return round(max((item.risk_score or 0.0) for item in scored), 2) if scored else 0.0
+
+
+def _average_epss(vulnerabilities: list[Vulnerability]) -> float:
+    scored = _cve_backed_findings(vulnerabilities)
+    if not scored:
+        return 0.0
+    return round(sum(item.epss or 0.0 for item in scored) / len(scored), 4)
+
+
+def _max_epss(vulnerabilities: list[Vulnerability]) -> float:
+    scored = _cve_backed_findings(vulnerabilities)
+    return round(max((item.epss or 0.0) for item in scored), 4) if scored else 0.0
 
 
 def serialize_job(job: ScanJob) -> dict[str, object]:
@@ -486,28 +518,31 @@ def target_report(db: Session, target: Target) -> dict[str, object]:
         .limit(30)
         .all()
     )
+    cve_backed = _cve_backed_findings(vulnerabilities)
     sorted_vulnerabilities = sorted(
         vulnerabilities,
         key=lambda item: (item.risk_score or 0.0, item.epss or 0.0, item.created_at or datetime.min),
         reverse=True,
     )
-    top_risk = sorted_vulnerabilities[:10]
-    epss_top = sorted(vulnerabilities, key=lambda item: item.epss or 0.0, reverse=True)[:5]
+    top_risk = sorted(cve_backed, key=lambda item: (item.risk_score or 0.0, item.epss or 0.0, item.created_at or datetime.min), reverse=True)[:10]
+    epss_top = sorted(cve_backed, key=lambda item: item.epss or 0.0, reverse=True)[:5]
 
     return {
         "target": serialize_target(db, target),
         "summary": {
             "asset_count": len(assets),
             "vulnerability_count": len(vulnerabilities),
+            "cve_backed_count": len(cve_backed),
+            "facts_only_count": len(vulnerabilities) - len(cve_backed),
             "identity_exposure_count": len(identities),
             "job_count": len(jobs),
             "classification_counts": classification_counts,
             "exposure_counts": exposure_counts,
             "kind_counts": kind_counts,
             "severity_counts": severity_counts,
-            "average_risk": round(sum(item.risk_score or 0.0 for item in vulnerabilities) / max(len(vulnerabilities), 1), 2),
-            "max_risk": round(max((item.risk_score or 0.0) for item in vulnerabilities), 2) if vulnerabilities else 0.0,
-            "average_epss": round(sum(item.epss or 0.0 for item in vulnerabilities) / max(len(vulnerabilities), 1), 4),
+            "average_risk": _average_risk(vulnerabilities),
+            "max_risk": _max_risk(vulnerabilities),
+            "average_epss": _average_epss(vulnerabilities),
         },
         "assets": [serialize_asset(asset) for asset in assets],
         "vulnerabilities": [serialize_vulnerability(vulnerability) for vulnerability in sorted_vulnerabilities[:200]],
@@ -556,6 +591,7 @@ def job_report(db: Session, job: ScanJob) -> dict[str, object]:
     )
 
     snapshot_summary = _json_load(snapshots[0].summary_json) if snapshots else {}
+    cve_backed = _cve_backed_findings(vulnerabilities)
     severity_counts: dict[str, int] = {}
     exposure_counts: dict[str, int] = {}
     tech_counts: dict[str, int] = {}
@@ -583,6 +619,8 @@ def job_report(db: Session, job: ScanJob) -> dict[str, object]:
             "asset_count": snapshot_summary.get("assets", len(assets)),
             "inventory_asset_count": len(assets),
             "vulnerability_count": len(vulnerabilities),
+            "cve_backed_count": len(cve_backed),
+            "facts_only_count": len(vulnerabilities) - len(cve_backed),
             "last_error": job.last_error,
             "severity_counts": severity_counts,
             "exposure_counts": exposure_counts,
@@ -595,9 +633,9 @@ def job_report(db: Session, job: ScanJob) -> dict[str, object]:
             "planned_stages": list(stage_tool_plan(job.kind).keys()),
             "planned_tools": planned_tools,
             "snapshot_summary": snapshot_summary or {},
-            "average_epss": round(sum(item.epss or 0.0 for item in vulnerabilities) / max(len(vulnerabilities), 1), 4),
-            "max_epss": round(max((item.epss or 0.0) for item in vulnerabilities), 4) if vulnerabilities else 0.0,
-            "top_epss": [serialize_vulnerability(item) for item in sorted(vulnerabilities, key=lambda row: row.epss or 0.0, reverse=True)[:5]],
+            "average_epss": _average_epss(vulnerabilities),
+            "max_epss": _max_epss(vulnerabilities),
+            "top_epss": [serialize_vulnerability(item) for item in sorted(cve_backed, key=lambda row: row.epss or 0.0, reverse=True)[:5]],
         },
         "stages": stage_payload,
         "results": [serialize_result(result) for result in results],
@@ -608,6 +646,14 @@ def job_report(db: Session, job: ScanJob) -> dict[str, object]:
             for snapshot in snapshots
         ],
     }
+
+
+def _delete_job_related_records(db: Session, job: ScanJob) -> None:
+    for vulnerability in db.query(Vulnerability).filter(Vulnerability.scan_job_id == job.id).all():
+        vulnerability.scan_job_id = None
+    db.query(ScanStage).filter(ScanStage.job_id == job.id).delete(synchronize_session=False)
+    db.query(ScanResult).filter(ScanResult.job_id == job.id).delete(synchronize_session=False)
+    db.query(AssetSnapshot).filter(AssetSnapshot.scan_job_id == job.id).delete(synchronize_session=False)
 
 
 @app.get("/")
@@ -919,14 +965,55 @@ def delete_job(job_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status == "running":
         raise HTTPException(status_code=409, detail="Running jobs cannot be deleted")
-    for vulnerability in db.query(Vulnerability).filter(Vulnerability.scan_job_id == job.id).all():
-        vulnerability.scan_job_id = None
-    db.query(ScanStage).filter(ScanStage.job_id == job.id).delete(synchronize_session=False)
-    db.query(ScanResult).filter(ScanResult.job_id == job.id).delete(synchronize_session=False)
-    db.query(AssetSnapshot).filter(AssetSnapshot.scan_job_id == job.id).delete(synchronize_session=False)
+    _delete_job_related_records(db, job)
     db.delete(job)
     db.commit()
     return {"deleted": True}
+
+
+@app.post("/jobs/cleanup-empty")
+def cleanup_empty_jobs(db: Session = Depends(get_db)) -> dict[str, object]:
+    deleted_jobs = 0
+    deleted_targets = 0
+    stale_cutoff = datetime.utcnow() - timedelta(minutes=10)
+    candidates = db.query(ScanJob).filter(ScanJob.status != "running").order_by(ScanJob.id).all()
+    for job in candidates:
+        has_stages = db.query(ScanStage).filter(ScanStage.job_id == job.id).first() is not None
+        has_results = db.query(ScanResult).filter(ScanResult.job_id == job.id).first() is not None
+        has_findings = db.query(Vulnerability).filter(Vulnerability.scan_job_id == job.id).first() is not None
+        if has_stages or has_results or has_findings:
+            continue
+        target = db.query(Target).filter(Target.id == job.target_id).one_or_none()
+        target_name = target.name if target else ""
+        is_stale = job.created_at < stale_cutoff
+        is_broken = bool(job.last_error)
+        is_test_data = target_name.endswith(".local")
+        if not (is_stale or is_broken or is_test_data):
+            continue
+        _delete_job_related_records(db, job)
+        db.delete(job)
+        deleted_jobs += 1
+
+    db.flush()
+
+    empty_targets = db.query(Target).order_by(Target.id).all()
+    for target in empty_targets:
+        has_jobs = db.query(ScanJob).filter(ScanJob.target_id == target.id).first() is not None
+        has_assets = db.query(Asset).filter(Asset.target_id == target.id).first() is not None
+        has_vulns = db.query(Vulnerability).filter(Vulnerability.target_id == target.id).first() is not None
+        has_identities = db.query(IdentityExposure).filter(IdentityExposure.target_id == target.id).first() is not None
+        if has_jobs or has_assets or has_vulns or has_identities:
+            continue
+        if not target.name.endswith(".local"):
+            continue
+        if target.created_at >= stale_cutoff:
+            continue
+        db.query(MonitoringRule).filter(MonitoringRule.target_id == target.id).delete(synchronize_session=False)
+        db.delete(target)
+        deleted_targets += 1
+
+    db.commit()
+    return {"deleted_jobs": deleted_jobs, "deleted_targets": deleted_targets}
 
 
 @app.post("/jobs/recover")

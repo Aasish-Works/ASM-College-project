@@ -49,6 +49,7 @@ class RawAssetStream:
     port: int | None = None
     protocol: str | None = None
     title: str | None = None
+    status_code: int | None = None
     exposure: str = "external"
     classification: str = "external_asm"
     sensitivity: str = "medium"
@@ -493,7 +494,18 @@ def generate_exposure_findings(streams: list[RawAssetStream], business_criticali
                     "cve": None,
                     "exposure": stream.exposure,
                     "asset_criticality": business_criticality,
-                    "details": {"kind": "open_port", "asset": stream.value},
+                    "details": {
+                        "kind": "open_port",
+                        "asset": stream.value,
+                        "host": host,
+                        "protocol": stream.protocol or "tcp",
+                        "port": stream.port,
+                        "classification": stream.classification,
+                        "provider": stream.provider,
+                        "status_code": stream.status_code,
+                        "title": stream.title,
+                        "observation": f"Observed externally reachable {stream.protocol or 'tcp'} service on port {stream.port}.",
+                    },
                 }
             )
         if stream.kind in {"domain", "application"} and any(token in value_lc for token in ("admin", "jenkins", "grafana", "kibana", "console")):
@@ -508,7 +520,16 @@ def generate_exposure_findings(streams: list[RawAssetStream], business_criticali
                     "cve": None,
                     "exposure": stream.exposure,
                     "asset_criticality": business_criticality,
-                    "details": {"kind": "public_admin_panel", "asset": stream.value},
+                    "details": {
+                        "kind": "public_admin_panel",
+                        "asset": stream.value,
+                        "host": host,
+                        "port": stream.port,
+                        "classification": stream.classification,
+                        "status_code": stream.status_code,
+                        "title": stream.title,
+                        "observation": "Observed admin-oriented host naming or application title on an externally reachable asset.",
+                    },
                 }
             )
         if stream.kind == "cloud_bucket" and stream.exposure == "public":
@@ -523,7 +544,14 @@ def generate_exposure_findings(streams: list[RawAssetStream], business_criticali
                     "cve": None,
                     "exposure": "cloud",
                     "asset_criticality": max(4, business_criticality),
-                    "details": {"kind": "public_bucket", "provider": stream.provider},
+                    "details": {
+                        "kind": "public_bucket",
+                        "asset": stream.value,
+                        "host": host,
+                        "provider": stream.provider,
+                        "classification": stream.classification,
+                        "observation": "Observed bucket-style asset marked as publicly reachable in the cloud surface.",
+                    },
                 }
             )
         if stream.metadata.get("tls_weak"):
@@ -538,7 +566,16 @@ def generate_exposure_findings(streams: list[RawAssetStream], business_criticali
                     "cve": None,
                     "exposure": stream.exposure,
                     "asset_criticality": business_criticality,
-                    "details": {"kind": "weak_tls"},
+                    "details": {
+                        "kind": "weak_tls",
+                        "asset": stream.value,
+                        "host": host,
+                        "port": stream.port,
+                        "protocol": stream.protocol or "https",
+                        "status_code": stream.status_code,
+                        "title": stream.title,
+                        "observation": "Observed TLS-facing service that should be reviewed for protocol and cipher strength.",
+                    },
                 }
             )
         if stream.kind in {"application", "service"} and any(token in value_lc for token in ("api", "graphql", "swagger")):
@@ -553,7 +590,16 @@ def generate_exposure_findings(streams: list[RawAssetStream], business_criticali
                     "cve": None,
                     "exposure": "api",
                     "asset_criticality": business_criticality,
-                    "details": {"kind": "public_api"},
+                    "details": {
+                        "kind": "public_api",
+                        "asset": stream.value,
+                        "host": host,
+                        "port": stream.port,
+                        "classification": stream.classification,
+                        "status_code": stream.status_code,
+                        "title": stream.title,
+                        "observation": "Observed externally reachable API-style endpoint in the target surface.",
+                    },
                 }
             )
     return findings

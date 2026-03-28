@@ -215,6 +215,7 @@ class ScanResult(Base, TimestampMixin):
     fallback_used = Column(Boolean, default=False, nullable=False)
     stdout_sample = Column(Text, nullable=True)
     stderr_sample = Column(Text, nullable=True)
+    payload = Column(Text, default="{}", nullable=False)
     artifact_json = Column(Text, nullable=True)
 
 

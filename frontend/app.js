@@ -41,6 +41,7 @@ const elements = {
   runIntel: document.getElementById("runIntel"),
   scanSelected: document.getElementById("scanSelected"),
   recoverJobs: document.getElementById("recoverJobs"),
+  cleanupJobs: document.getElementById("cleanupJobs"),
   jobSearch: document.getElementById("jobSearch"),
   jobSearchBtn: document.getElementById("jobSearchBtn"),
   jobTable: document.getElementById("jobTable"),
@@ -122,6 +123,77 @@ function fmtDate(value) {
   } catch {
     return String(value);
   }
+}
+
+function fmtNumber(value, digits = 2) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return digits === 4 ? "0.0000" : "0.00";
+  return parsed.toFixed(digits);
+}
+
+function joinFacts(parts) {
+  return parts
+    .filter(Boolean)
+    .map((part) => h(part))
+    .join(" • ");
+}
+
+function isFactsOnlyFinding(item) {
+  return Boolean(item?.facts_only || item?.details?.evidence_mode === "facts_only" || (!item?.cve && item?.source === "exposure_engine"));
+}
+
+function findingEvidenceParts(item) {
+  const details = item?.details || {};
+  const parts = [];
+  if (details.asset) parts.push(`asset ${details.asset}`);
+  if (details.protocol && (details.port ?? item?.port)) {
+    parts.push(`${details.protocol}/${details.port ?? item?.port}`);
+  } else if (item?.port) {
+    parts.push(`port ${item.port}`);
+  }
+  if (details.provider) parts.push(`provider ${details.provider}`);
+  if (details.status_code) parts.push(`HTTP ${details.status_code}`);
+  if (details.path) parts.push(`path ${details.path}`);
+  if (details.classification) parts.push(`class ${details.classification}`);
+  if (details.title) parts.push(`title ${details.title}`);
+  return parts;
+}
+
+function renderFindingCard(item, options = {}) {
+  const { includeSourceInMeta = true } = options;
+  const factsOnly = isFactsOnlyFinding(item);
+  const details = item?.details || {};
+  let primary = "";
+  let secondary = "";
+  let evidence = "";
+
+  if (factsOnly) {
+    primary = joinFacts([item.host || details.host || "observed asset", item.exposure || details.classification || "surface", includeSourceInMeta ? `source ${item.source || "scanner"}` : ""]);
+    secondary = h(item.description || details.observation || "Observed exposure without CVE-based scoring.");
+    const evidenceParts = findingEvidenceParts(item);
+    if (details.observation && details.observation !== item.description) {
+      evidenceParts.unshift(details.observation);
+    }
+    evidence = joinFacts(evidenceParts);
+  } else {
+    primary = joinFacts([
+      item.cve || "No CVE",
+      `CVSS ${fmtNumber(item.cvss, 1)}`,
+      item.epss_available ? `EPSS ${fmtNumber(item.epss, 4)}` : "EPSS unavailable",
+      `risk ${fmtNumber(item.risk_score, 2)}`,
+      includeSourceInMeta ? item.source : "",
+    ]);
+    secondary = joinFacts([item.host || "N/A", item.threat_context, item.exploit_maturity]);
+  }
+
+  return `
+    <article class="list-item">
+      <header><strong>${h(item.title)}</strong>${badge(item.severity, severityTone(item.severity))}</header>
+      ${primary ? `<div class="list-meta">${primary}</div>` : ""}
+      ${secondary ? `<div class="list-meta">${secondary}</div>` : ""}
+      ${evidence ? `<div class="list-meta">${evidence}</div>` : ""}
+    </article>
+  `;
 }
 
 function openDetail(title, content) {
@@ -242,9 +314,11 @@ function renderSummary(summary) {
   const cards = [
     ["Assets", summary.asset_count || 0],
     ["Findings", summary.vulnerability_count || 0],
+    ["CVE-backed", summary.cve_backed_count || 0],
+    ["Facts-only", summary.facts_only_count || 0],
     ["Identity exposures", summary.identity_exposure_count || 0],
-    ["Average risk", summary.average_risk || 0],
-    ["Average EPSS", summary.average_epss || 0],
+    ["Average scored risk", summary.average_risk || 0],
+    ["CVE average EPSS", summary.average_epss || 0],
     ["Jobs", summary.job_count || 0],
   ];
   elements.targetSummary.innerHTML = cards
@@ -335,13 +409,8 @@ function renderTargetIntel(report, monitoring = []) {
 
   renderList(
     elements.exposureList,
-    report.vulnerabilities.filter((item) => item.source === "exposure_engine" || item.exposure !== "internal"),
-    (item) => `
-      <article class="list-item">
-        <header><strong>${h(item.title)}</strong>${badge(item.severity, severityTone(item.severity))}</header>
-        <div class="list-meta">${h(item.host || "N/A")} • risk ${item.risk_score} • ${h(item.exposure)}</div>
-      </article>
-    `,
+    report.vulnerabilities.filter((item) => item.source === "exposure_engine" || item.facts_only),
+    (item) => renderFindingCard(item, { includeSourceInMeta: true }),
     "No exposure findings."
   );
 
@@ -361,13 +430,7 @@ function renderTargetIntel(report, monitoring = []) {
   renderList(
     elements.vulnerabilityList,
     report.vulnerabilities,
-    (item) => `
-      <article class="list-item">
-        <header><strong>${h(item.title)}</strong>${badge(item.severity, severityTone(item.severity))}</header>
-        <div class="list-meta">${h(item.cve || "No CVE")} • CVSS ${item.cvss} • EPSS ${item.epss} • risk ${item.risk_score}</div>
-        <div class="list-meta">${h(item.threat_context)} • ${h(item.exploit_maturity)}</div>
-      </article>
-    `,
+    (item) => renderFindingCard(item, { includeSourceInMeta: true }),
     "No vulnerabilities for this target."
   );
 
@@ -483,20 +546,12 @@ function renderReport(report) {
     .join("");
   const topFindings = report.vulnerabilities
     .slice(0, 20)
-    .map(
-      (item) => `
-        <div class="list-item">
-          <header><strong>${h(item.title)}</strong>${badge(item.severity, severityTone(item.severity))}</header>
-          <div class="list-meta">${h(item.cve || "No CVE")} • EPSS ${item.epss} • risk ${item.risk_score} • ${h(item.source)}</div>
-          <div class="list-meta">${h(item.host || "N/A")} • ${h(item.threat_context)} • ${h(item.exploit_maturity)}</div>
-        </div>
-      `
-    )
+    .map((item) => renderFindingCard(item, { includeSourceInMeta: true }))
     .join("");
   elements.reportBody.innerHTML = `
     <section class="report-section">
       <h3>${h(report.target.name)} • Job #${report.job.id}</h3>
-      <p>Status: ${h(report.job.status)} | ${report.summary.asset_count} scan assets | ${report.summary.inventory_asset_count || report.summary.asset_count} inventory assets | ${report.summary.vulnerability_count} findings | average EPSS ${report.summary.average_epss}</p>
+      <p>Status: ${h(report.job.status)} | ${report.summary.asset_count} scan assets | ${report.summary.inventory_asset_count || report.summary.asset_count} inventory assets | ${report.summary.vulnerability_count} findings | ${report.summary.cve_backed_count || 0} CVE-backed | ${report.summary.facts_only_count || 0} facts-only | CVE average EPSS ${report.summary.average_epss}</p>
       ${report.summary.last_error ? `<p class="list-meta">Last error: ${h(report.summary.last_error)}</p>` : ""}
       <div class="report-summary-grid">
         <div class="summary-card"><div class="stat-label">Stages</div><div class="stat-value">${report.summary.stage_count}</div></div>
@@ -605,10 +660,13 @@ async function loadTargetIntel(targetId) {
   renderTargetIntel(report, monitoring.items || []);
 }
 
-async function loadJobReport(jobId) {
+async function loadJobReport(jobId, options = {}) {
+  const { scroll = true } = options;
   const report = await request(`/reports/jobs/${jobId}`);
   renderReport(report);
-  document.getElementById("reporting").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scroll) {
+    document.getElementById("reporting").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 async function pollData() {
@@ -618,7 +676,7 @@ async function pollData() {
       await loadTargetIntel(state.selectedTarget.target.id);
     }
     if (state.selectedReport?.job?.id) {
-      await loadJobReport(state.selectedReport.job.id);
+      await loadJobReport(state.selectedReport.job.id, { scroll: false });
     }
   } catch (error) {
     setHint(`Background refresh failed: ${error.message}`, "warning");
@@ -698,6 +756,16 @@ async function recoverJobs() {
   }
 }
 
+async function cleanupJobs() {
+  try {
+    const response = await request("/jobs/cleanup-empty", { method: "POST" });
+    setHint(`Removed ${response.deleted_jobs} stale job(s) and ${response.deleted_targets} empty target(s).`, "success");
+    await loadDashboard();
+  } catch (error) {
+    setHint(`Cleanup failed: ${error.message}`, "danger");
+  }
+}
+
 async function refreshIntelForSelected() {
   if (!state.selectedTarget?.target?.id) {
     setHint("Select a target before requesting intelligence refresh.", "warning");
@@ -735,6 +803,7 @@ function bindEvents() {
   elements.targetSearchBtn.addEventListener("click", searchTargets);
   elements.jobSearchBtn.addEventListener("click", searchJobs);
   elements.recoverJobs.addEventListener("click", recoverJobs);
+  elements.cleanupJobs.addEventListener("click", cleanupJobs);
   elements.runIntel.addEventListener("click", () => refreshIntelForSelected().catch((error) => setHint(error.message, "danger")));
   elements.scanSelected.addEventListener("click", () => quickScanSelected().catch((error) => setHint(error.message, "danger")));
   elements.quickScan.addEventListener("click", () => quickScanSelected().catch((error) => setHint(error.message, "danger")));

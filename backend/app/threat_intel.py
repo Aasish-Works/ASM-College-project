@@ -17,15 +17,6 @@ SEVERITY_TO_CVSS = {
     "info": 0.0,
 }
 
-SEVERITY_TO_LIKELIHOOD = {
-    "critical": 0.85,
-    "high": 0.65,
-    "medium": 0.4,
-    "low": 0.2,
-    "info": 0.05,
-}
-
-
 _kev_cache: set[str] | None = None
 _exploit_cache: dict[str, dict[str, str]] | None = None
 
@@ -90,10 +81,6 @@ def severity_to_cvss(severity: str | None) -> float:
     return SEVERITY_TO_CVSS.get((severity or "info").strip().lower(), 0.0)
 
 
-def severity_to_likelihood(severity: str | None) -> float:
-    return SEVERITY_TO_LIKELIHOOD.get((severity or "info").strip().lower(), 0.05)
-
-
 def infer_exploit_maturity(cve: str | None, title: str, severity: str, kev: bool, exploit_record: dict[str, str] | None) -> str:
     if kev:
         return "weaponized"
@@ -121,10 +108,24 @@ def enrich_vulnerability(cve: str | None, severity: str, title: str, description
     cve_key = (cve or "").strip().upper() or None
     kev = cve_key in _load_kev() if cve_key else False
     exploit_record = _load_exploitdb().get(cve_key) if cve_key else None
-    epss_lookup = get_epss_score(cve_key)
-    epss = epss_lookup if epss_lookup is not None else severity_to_likelihood(severity)
-    exploit_maturity = infer_exploit_maturity(cve_key, title, severity, kev, exploit_record)
-    threat_context = infer_threat_context(kev, exploit_maturity, ransomware=False)
+    epss_lookup = get_epss_score(cve_key) if cve_key else None
+
+    if cve_key:
+        epss = epss_lookup if epss_lookup is not None else 0.0
+        exploit_maturity = infer_exploit_maturity(cve_key, title, severity, kev, exploit_record)
+        threat_context = infer_threat_context(kev, exploit_maturity, ransomware=False)
+        cvss = severity_to_cvss(severity)
+        cvss_source = "severity_derived"
+        epss_source = "epss" if epss_lookup is not None else "unavailable"
+        evidence_mode = "cve_enriched"
+    else:
+        epss = 0.0
+        exploit_maturity = "not_applicable"
+        threat_context = "observed_exposure"
+        cvss = 0.0
+        cvss_source = "not_applicable"
+        epss_source = "not_applicable"
+        evidence_mode = "facts_only"
 
     references = []
     if cve_key:
@@ -136,14 +137,16 @@ def enrich_vulnerability(cve: str | None, severity: str, title: str, description
 
     return {
         "cve": cve_key,
-        "cvss": severity_to_cvss(severity),
+        "cvss": cvss,
         "cvss_v4": 0.0,
         "epss": epss,
         "kev": kev,
         "exploit_maturity": exploit_maturity,
         "threat_context": threat_context,
         "ransomware": False,
-        "likelihood_source": "epss" if cve_key and epss_lookup is not None else "heuristic",
+        "cvss_source": cvss_source,
+        "epss_source": epss_source,
+        "evidence_mode": evidence_mode,
         "references": references,
         "last_synced_at": datetime.utcnow(),
     }

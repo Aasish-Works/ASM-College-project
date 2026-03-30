@@ -363,6 +363,8 @@ def serialize_stage(stage: ScanStage) -> dict[str, object]:
 
 
 def serialize_result(result: ScanResult) -> dict[str, object]:
+    payload = _json_load(result.payload) or {}
+    artifact = _json_load(result.artifact_json) or {}
     return {
         "id": result.id,
         "job_id": result.job_id,
@@ -373,8 +375,12 @@ def serialize_result(result: ScanResult) -> dict[str, object]:
         "fallback_used": result.fallback_used,
         "stdout_sample": result.stdout_sample,
         "stderr_sample": result.stderr_sample,
-        "payload": _json_load(result.payload) or {},
-        "artifact": _json_load(result.artifact_json) or {},
+        "payload": payload,
+        "artifact": artifact,
+        "fallback_reason": payload.get("fallback_reason"),
+        "native_available": payload.get("native_available"),
+        "native_supported": payload.get("native_supported"),
+        "resolved_target": payload.get("resolved_target"),
         "created_at": result.created_at,
     }
 

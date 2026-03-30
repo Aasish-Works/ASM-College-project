@@ -124,6 +124,36 @@ const severityTone = (value) => {
   return "neutral";
 };
 
+function executionBadge(result) {
+  if (!result?.fallback_used) return { label: "native", tone: "success" };
+  const reason = String(result?.fallback_reason || result?.stderr_sample || "").toLowerCase();
+  if (reason.includes("forced by configuration")) return { label: "fallback by config", tone: "warning" };
+  if (reason.includes("not found in path")) return { label: "fallback missing binary", tone: "warning" };
+  if (reason.includes("not implemented")) return { label: "fallback only", tone: "info" };
+  return { label: "fallback", tone: "warning" };
+}
+
+function executionSummary(result) {
+  const badge = executionBadge(result);
+  if (!result?.fallback_used) return "Direct native tool execution.";
+  if (badge.label === "fallback by config") return "Native execution was available but disabled by runtime configuration.";
+  if (badge.label === "fallback missing binary") return "The tool binary was not found in PATH, so the adapter used Python fallback evidence.";
+  if (badge.label === "fallback only") return "This adapter currently supports Python fallback evidence only.";
+  return "The adapter fell back to Python evidence collection instead of direct native execution.";
+}
+
+function outputTitle(result) {
+  return result?.fallback_used ? `${result.tool} fallback evidence` : `${result.tool} native output`;
+}
+
+function toolAvailabilityLabel(tool) {
+  const mode = String(state.runtime?.mode || "unknown").toLowerCase();
+  if (!tool.native_supported) return { label: "fallback only", tone: "info" };
+  if (tool.native_available && mode === "fallback") return { label: "available but forced fallback", tone: "warning" };
+  if (tool.native_available) return { label: "native available", tone: "success" };
+  return { label: "fallback missing binary", tone: "warning" };
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -341,13 +371,20 @@ function renderJobs(list = state.jobs) {
       ${summary.last_error ? `<div class="meta">Last error: ${escapeHtml(summary.last_error)}</div>` : ""}
     </article>
     <article class="report-card"><header><strong>Stage timeline</strong></header>${(report.stages || []).length ? report.stages.map((stage) => `<article class="list-card"><header><strong>${escapeHtml(stage.name)}</strong>${pill(stage.status, tone(stage.status))}</header><div class="meta">${escapeHtml(`Start ${fmtDate(stage.started_at)} • Finish ${fmtDate(stage.finished_at)} • ${stage.duration_ms || 0} ms`)}</div>${stage.logs ? `<div class="meta">${escapeHtml(stage.logs)}</div>` : ""}</article>`).join("") : empty("No stage records stored yet.")}</article>
-    <article class="report-card"><header><strong>Tool results</strong></header>${(report.results || []).length ? report.results.map((result) => `<article class="list-card"><header><strong>${escapeHtml(result.tool)}</strong>${pill(result.fallback_used ? "fallback" : "native", result.fallback_used ? "warning" : "success")}</header><div class="meta">${escapeHtml(`${result.stage} • exit ${result.exit_code} • ${result.status}`)}</div><div class="record-actions"><button class="button quiet" data-result-detail="${result.id}">View output</button></div></article>`).join("") : empty("No tool results stored yet.")}</article>
+    <article class="report-card"><header><strong>Tool results</strong></header>${(report.results || []).length ? report.results.map((result) => {
+      const badge = executionBadge(result);
+      return `<article class="list-card"><header><strong>${escapeHtml(result.tool)}</strong>${pill(badge.label, badge.tone)}</header><div class="meta">${escapeHtml(`${result.stage} • exit ${result.exit_code} • ${result.status}`)}</div><div class="meta">${escapeHtml(executionSummary(result))}</div><div class="record-actions"><button class="button quiet" data-result-detail="${result.id}">View output</button></div></article>`;
+    }).join("") : empty("No tool results stored yet.")}</article>
     <article class="report-card"><header><strong>Findings</strong></header>${(report.vulnerabilities || []).length ? report.vulnerabilities.slice(0, 40).map(renderFinding).join("") : empty("No findings attached to this job.")}</article>
   `;
   el.reportBody.querySelectorAll("[data-result-detail]").forEach((button) => button.addEventListener("click", () => {
     const result = (report.results || []).find((item) => item.id === Number(button.dataset.resultDetail));
     if (!result) return;
-    openDetail(`${result.tool} output`, `<pre>${escapeHtml(JSON.stringify({ payload: result.payload, artifact: result.artifact }, null, 2))}</pre><pre>${escapeHtml(result.stdout_sample || "")}</pre>${result.stderr_sample ? `<pre>${escapeHtml(result.stderr_sample)}</pre>` : ""}`);
+    const badge = executionBadge(result);
+    openDetail(
+      outputTitle(result),
+      `<div class="meta-row">${pill(badge.label, badge.tone)}${pill(result.stage, "info")}${pill(`exit ${result.exit_code}`, result.exit_code === 0 ? "success" : "danger")}</div><div class="meta">${escapeHtml(executionSummary(result))}</div><pre>${escapeHtml(JSON.stringify({ command: result.payload?.command, resolved_target: result.resolved_target, fallback_reason: result.fallback_reason, native_available: result.native_available, native_supported: result.native_supported, payload: result.payload, artifact: result.artifact }, null, 2))}</pre><pre>${escapeHtml(result.stdout_sample || "")}</pre>${result.stderr_sample ? `<pre>${escapeHtml(result.stderr_sample)}</pre>` : ""}`
+    );
   }));
 }
 
@@ -376,13 +413,17 @@ function renderTools() {
   const currentTool = el.toolName.value;
   el.toolName.innerHTML = inventory.map((item) => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`).join("");
   if (currentTool && inventory.some((item) => item.name === currentTool)) el.toolName.value = currentTool;
-  el.toolInventory.innerHTML = inventory.length ? inventory.map((tool) => `<article class="tool-card ${el.toolName.value === tool.name ? "is-selected" : ""}"><header><strong>${escapeHtml(tool.name)}</strong>${pill(tool.native_available ? "native available" : tool.native_supported ? "fallback now" : "fallback only", tool.native_available ? "success" : "warning")}</header><div class="meta">${escapeHtml(`${tool.stage} • ${tool.category}`)}</div><div class="meta">${escapeHtml(tool.description)}</div><div class="meta">${escapeHtml(`Profiles: ${(tool.profiles || []).join(", ") || "none"}`)}</div><div class="meta">${escapeHtml(`Preview: ${(tool.command_preview || []).join(" ")}`)}</div></article>`).join("") : empty("No tool inventory available.");
+  el.toolInventory.innerHTML = inventory.length ? inventory.map((tool) => {
+    const availability = toolAvailabilityLabel(tool);
+    return `<article class="tool-card ${el.toolName.value === tool.name ? "is-selected" : ""}"><header><strong>${escapeHtml(tool.name)}</strong>${pill(availability.label, availability.tone)}</header><div class="meta">${escapeHtml(`${tool.stage} • ${tool.category}`)}</div><div class="meta">${escapeHtml(tool.description)}</div><div class="meta">${escapeHtml(`Profiles: ${(tool.profiles || []).join(", ") || "none"}`)}</div><div class="meta">${escapeHtml(`Preview: ${(tool.command_preview || []).join(" ")}`)}</div></article>`;
+  }).join("") : empty("No tool inventory available.");
   if (!state.toolExecution) {
     el.toolExecution.innerHTML = empty("Run a tool to inspect command resolution, stdout, stderr, and fallback evidence.");
     return;
   }
   const result = state.toolExecution;
-  el.toolExecution.innerHTML = `<article class="console-card"><header><strong>${escapeHtml(result.tool)} on ${escapeHtml(result.resolved_target || "")}</strong>${pill(result.fallback_used ? "fallback" : "native", result.fallback_used ? "warning" : "success")}</header><div class="meta-row"><span>${escapeHtml(`stage ${result.stage}`)}</span><span>${escapeHtml(`status ${result.status}`)}</span><span>${escapeHtml(`exit ${result.exit_code}`)}</span><span>${escapeHtml(`${result.duration_ms || 0} ms`)}</span></div><pre>${escapeHtml(JSON.stringify({ command: result.command, fallback_reason: result.fallback_reason, artifact: result.artifact }, null, 2))}</pre><pre>${escapeHtml(result.stdout || "")}</pre>${result.stderr ? `<pre>${escapeHtml(result.stderr)}</pre>` : ""}</article>`;
+  const badge = executionBadge(result);
+  el.toolExecution.innerHTML = `<article class="console-card"><header><strong>${escapeHtml(result.tool)} on ${escapeHtml(result.resolved_target || "")}</strong>${pill(badge.label, badge.tone)}</header><div class="meta-row"><span>${escapeHtml(`stage ${result.stage}`)}</span><span>${escapeHtml(`status ${result.status}`)}</span><span>${escapeHtml(`exit ${result.exit_code}`)}</span><span>${escapeHtml(`${result.duration_ms || 0} ms`)}</span></div><div class="meta">${escapeHtml(executionSummary(result))}</div><pre>${escapeHtml(JSON.stringify({ command: result.command, fallback_reason: result.fallback_reason, native_available: result.native_available, native_supported: result.native_supported, artifact: result.artifact }, null, 2))}</pre><pre>${escapeHtml(result.stdout || "")}</pre>${result.stderr ? `<pre>${escapeHtml(result.stderr)}</pre>` : ""}</article>`;
 }
 
 function renderSettings() {
@@ -541,7 +582,7 @@ async function runToolExecution() {
       body: JSON.stringify({ tool: el.toolName.value, target: el.toolTarget.value.trim(), timeout_seconds: Number(el.toolTimeout.value || 20) }),
     });
     state.toolExecution = payload.result || payload;
-    el.toolHint.textContent = `Completed ${state.toolExecution.tool} using ${state.toolExecution.fallback_used ? "fallback" : "native"} execution.`;
+    el.toolHint.textContent = `Completed ${state.toolExecution.tool} using ${executionBadge(state.toolExecution).label}.`;
     renderTools();
   } catch (error) {
     el.toolHint.textContent = `Tool execution failed: ${error.message || error}`;

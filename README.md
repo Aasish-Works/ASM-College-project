@@ -92,7 +92,7 @@ Linux:
 ## Notes
 
 - All scans must be executed only against authorized targets.
-- The platform now defaults to `fallback` mode so the scanner path stays functional out of the box.
+- The platform now defaults to `auto` mode so installed native scanner binaries run when available and Python fallback stays available when they are not.
 - The fallback path uses built-in Python DNS, HTTP, TLS, and port checks instead of invented placeholder results.
 - Native binaries are opt-in. Set `ASM_NATIVE_TOOL_MODE=auto` or `ASM_NATIVE_TOOL_MODE=native` if you want the platform to call installed scanner binaries directly.
 
@@ -102,7 +102,7 @@ Linux:
 - `ASM_EPSS_CSV`: EPSS CSV path, default `./data/epss.csv`
 - `ASM_KEV_JSON`: CISA KEV JSON path, default `./data/kev.json`
 - `ASM_EXPLOITDB_CSV`: Exploit-DB CSV path, default `./data/exploitdb.csv`
-- `ASM_NATIVE_TOOL_MODE`: `fallback`, `native`, or `auto`, default `fallback`
+- `ASM_NATIVE_TOOL_MODE`: `auto`, `fallback`, or `native`, default `auto`
 - `ASM_TOOL_TIMEOUT`: per-tool timeout in seconds, default `20`
 - `ASM_CORS_ORIGINS`: comma-separated frontend origins
 - `ASM_DEFAULT_MONITOR_CRON`: default monitoring schedule

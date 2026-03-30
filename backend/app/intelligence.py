@@ -349,7 +349,7 @@ def upsert_asset(db: Session, target: Target, stream: RawAssetStream) -> Asset:
     metadata = stream.metadata or {}
     tech_stack = metadata.get("tech")
     serialized_tech = json.dumps(tech_stack, default=str) if tech_stack else None
-    status_code = metadata.get("status_code")
+    status_code = stream.status_code if isinstance(stream.status_code, int) else metadata.get("status_code")
     if asset is None:
         asset = Asset(
             target_id=target.id,
@@ -412,6 +412,7 @@ def persist_asset_graph(
     identities: list[RawIdentityExposure],
 ) -> dict[str, Asset]:
     asset_map: dict[str, Asset] = {}
+    seen_relationships: set[tuple[int, int, str]] = set()
     for stream in streams:
         asset = upsert_asset(db, target, stream)
         asset_map[stream.asset_key()] = asset
@@ -421,6 +422,10 @@ def persist_asset_graph(
         dst = asset_map.get(f"{relation['target_kind']}:{str(relation['target_value']).lower()}")
         if src is None or dst is None:
             continue
+        dedupe_key = (src.id, dst.id, str(relation["relation"]))
+        if dedupe_key in seen_relationships:
+            continue
+        seen_relationships.add(dedupe_key)
         exists = (
             db.query(AssetRelationship)
             .filter(

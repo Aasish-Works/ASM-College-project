@@ -85,9 +85,28 @@ def ensure_sqlite_schema() -> None:
                 connection.execute(text(ddl))
 
 
+def ensure_sqlite_data_defaults() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+
+    statements = [
+        "UPDATE scan_results SET payload='{}' WHERE payload IS NULL OR TRIM(payload) = ''",
+        "UPDATE scan_results SET artifact_json='{}' WHERE artifact_json IS NULL OR TRIM(artifact_json) = ''",
+        "UPDATE scan_jobs SET current_stage = NULL WHERE current_stage = ''",
+        "UPDATE scan_jobs SET status_message = NULL WHERE status_message = ''",
+    ]
+    with engine.begin() as connection:
+        for statement in statements:
+            try:
+                connection.execute(text(statement))
+            except Exception:
+                continue
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_sqlite_schema()
+    ensure_sqlite_data_defaults()
 
 
 def get_db() -> Iterator:

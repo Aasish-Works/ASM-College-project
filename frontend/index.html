@@ -3,79 +3,108 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Enterprise ASM Platform</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <title>Helios ASM | Enterprise Attack Surface Platform</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="shell">
+    <div class="app-shell">
       <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-mark">A</div>
+        <div class="brand-stack">
+          <div class="brand-mark">H</div>
           <div>
-            <div class="brand-title">Aegis ASM</div>
-            <div class="brand-subtitle">Enterprise attack surface intelligence</div>
+            <div class="eyebrow">Helios ASM</div>
+            <h1>Attack Surface Operations</h1>
+            <p>Discovery, graph correlation, exposure evidence, and operator-grade reporting.</p>
           </div>
         </div>
-        <nav class="nav">
-          <a href="#overview">Overview</a>
-          <a href="#inventory">Inventory</a>
-          <a href="#intelligence">Target Intel</a>
-          <a href="#jobs">Scan Jobs</a>
-          <a href="#reporting">Reporting</a>
-          <a href="#operations">Operations</a>
+
+        <nav class="nav-stack">
+          <button class="nav-button is-active" data-view="overview">Overview</button>
+          <button class="nav-button" data-view="inventory">Inventory</button>
+          <button class="nav-button" data-view="jobs">Scan Jobs</button>
+          <button class="nav-button" data-view="reporting">Reporting</button>
+          <button class="nav-button" data-view="tools">Tool Lab</button>
+          <button class="nav-button" data-view="settings">Settings</button>
         </nav>
-        <div class="sidebar-block">
-          <h3>API</h3>
-          <label class="stacked">
-            <span>Backend URL</span>
+
+        <div class="sidebar-card">
+          <div class="eyebrow">Platform status</div>
+          <div id="sidebarStatus" class="status-grid"></div>
+        </div>
+
+        <div class="sidebar-card">
+          <div class="eyebrow">Backend endpoint</div>
+          <label class="field">
+            <span>API base URL</span>
             <input id="apiBaseInput" type="text" value="http://127.0.0.1:8000" />
           </label>
-          <button id="saveApiBase" class="ghost">Save</button>
+          <div class="sidebar-actions">
+            <button id="saveApiBase" class="button quiet">Save</button>
+            <button id="refreshAll" class="button accent">Refresh</button>
+          </div>
+        </div>
+
+        <div class="sidebar-card">
+          <div class="eyebrow">Control actions</div>
+          <div class="sidebar-actions stacked">
+            <button id="recoverJobs" class="button quiet">Recover stuck jobs</button>
+            <button id="cleanupJobs" class="button quiet">Cleanup stale jobs</button>
+            <button id="resetData" class="button danger">Reset all runtime data</button>
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <span id="runtimeMode">Mode: unknown</span>
+          <span id="lastRefresh">Last refresh: never</span>
         </div>
       </aside>
 
-      <main class="main">
-        <header class="topbar">
+      <main class="workspace">
+        <header class="masthead">
           <div>
-            <h1>Enterprise Attack Surface Management</h1>
-            <p>Multi-source intelligence, contextual risk, attack path analysis, and continuous monitoring.</p>
+            <div class="eyebrow">Operator workspace</div>
+            <h2 id="viewTitle">Overview</h2>
+            <p id="viewSubtitle">Mission summary, scanning posture, and attack-surface drift in one place.</p>
           </div>
-          <div class="topbar-actions">
-            <button id="refreshAll" class="ghost">Refresh</button>
-            <button id="quickScan" class="primary">Quick scan selected target</button>
-          </div>
+          <button id="quickScan" class="button accent">Quick scan selected target</button>
         </header>
 
-        <section class="command-panel">
-          <div class="panel-title-row">
+        <section class="launchpad panel">
+          <div class="panel-head">
             <div>
-              <h2>Scan a new domain, IP, or CIDR</h2>
-              <p>Register a target, queue a full scan, and start continuous monitoring.</p>
+              <div class="eyebrow">New intake</div>
+              <h3>Queue a target for scanning</h3>
             </div>
-            <button id="useSelectedTarget" class="ghost">Use selected target</button>
+            <button id="useSelectedTarget" class="button quiet">Use selected target</button>
           </div>
-          <div class="command-grid">
-            <label class="stacked wide">
-              <span>Domain / IP / CIDR</span>
+          <div class="form-grid">
+            <label class="field field-span-2">
+              <span>Domain, IP, or CIDR</span>
               <input id="scanInput" type="text" placeholder="example.com or 203.0.113.10 or 203.0.113.0/24" />
             </label>
-            <label class="stacked">
+            <label class="field">
               <span>Scope</span>
-              <input id="scanScope" type="text" placeholder="Subs, IP range, cloud tags" />
+              <input id="scanScope" type="text" placeholder="Subs, SaaS, cloud tags, owners" />
             </label>
-            <label class="stacked">
-              <span>Type</span>
+            <label class="field">
+              <span>Target type</span>
               <select id="scanTargetType">
                 <option value="domain">Domain</option>
                 <option value="ip">IP</option>
                 <option value="cidr">CIDR</option>
               </select>
             </label>
-            <label class="stacked">
-              <span>Criticality</span>
+            <label class="field">
+              <span>Scan profile</span>
+              <select id="scanKind">
+                <option value="full_scan">Full scan</option>
+                <option value="continuous_monitoring">Continuous monitoring</option>
+                <option value="intelligence_refresh">Intelligence refresh</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Business criticality</span>
               <select id="scanCriticality">
                 <option value="5">Critical</option>
                 <option value="4">High</option>
@@ -84,7 +113,7 @@
                 <option value="1">Informational</option>
               </select>
             </label>
-            <label class="stacked">
+            <label class="field">
               <span>Priority</span>
               <select id="scanPriority">
                 <option value="1">P1</option>
@@ -94,205 +123,318 @@
                 <option value="5">P5</option>
               </select>
             </label>
-            <div class="stacked action-cell">
-              <span>&nbsp;</span>
-              <button id="scanCreate" class="primary">Create or scan</button>
-            </div>
           </div>
-          <div id="scanHint" class="hint">No active action.</div>
+          <div class="launch-actions">
+            <button id="scanCreate" class="button accent">Create and scan</button>
+            <div id="scanHint" class="status-line">No active action.</div>
+          </div>
         </section>
 
-        <section id="overview" class="panel">
-          <div class="panel-title-row">
-            <div>
-              <h2>Overview</h2>
-              <p>Platform health, risk posture, and trend analytics.</p>
-            </div>
-          </div>
-          <div id="overviewCards" class="overview-grid"></div>
-          <div class="two-column">
-            <div class="subpanel">
-              <div class="subpanel-header">
-                <h3>Attack surface trend</h3>
-                <span>Assets, findings, and scans over the last 7 days</span>
+        <section id="view-overview" class="view is-active">
+          <div id="overviewCards" class="stat-grid"></div>
+
+          <div class="content-grid two-up">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Trend line</div>
+                  <h3>Attack surface growth</h3>
+                </div>
               </div>
-              <div id="trendChart" class="chart chart-lines"></div>
-            </div>
-            <div class="subpanel">
-              <div class="subpanel-header">
-                <h3>Risk heatmap</h3>
-                <span>Severity vs exposure context</span>
+              <div id="heroTrend" class="trend-shell"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Risk matrix</div>
+                  <h3>Exposure heatmap</h3>
+                </div>
               </div>
-              <div id="riskHeatmap" class="heatmap"></div>
-            </div>
+              <div id="riskHeatmap" class="heatmap-shell"></div>
+            </article>
           </div>
-        </section>
 
-        <section id="inventory" class="panel">
-          <div class="panel-title-row">
-            <div>
-              <h2>Target inventory</h2>
-              <p>Search for a particular domain and open its intelligence view.</p>
-            </div>
-            <div class="toolbar">
-              <input id="targetSearch" type="text" placeholder="Search registered domains or IPs" />
-              <button id="targetSearchBtn" class="ghost">Search</button>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Target</th>
-                  <th>Type</th>
-                  <th>Assets</th>
-                  <th>Findings</th>
-                  <th>Exposure</th>
-                  <th>Identities</th>
-                  <th>Criticality</th>
-                  <th>Latest scan</th>
-                </tr>
-              </thead>
-              <tbody id="targetTable"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section id="intelligence" class="panel">
-          <div class="panel-title-row">
-            <div>
-              <h2 id="selectedTargetTitle">Target intelligence</h2>
-              <p id="selectedTargetSubtitle">Select a target to load graph, exposures, identities, attack paths, and detailed evidence.</p>
-            </div>
-            <div class="toolbar">
-              <button id="runIntel" class="ghost">Refresh intelligence</button>
-              <button id="scanSelected" class="primary">Scan selected</button>
-            </div>
-          </div>
-          <div id="targetSummary" class="summary-grid"></div>
-          <div class="two-column">
-            <div class="subpanel">
-              <div class="subpanel-header">
-                <h3>Asset graph</h3>
-                <span>Domain, IP, service, application, and identity relationships</span>
+          <div class="content-grid two-up">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Recent activity</div>
+                  <h3>Recently updated targets</h3>
+                </div>
               </div>
-              <svg id="graphCanvas" class="graph" viewBox="0 0 800 420"></svg>
-            </div>
-            <div class="subpanel">
-              <div class="subpanel-header">
-                <h3>Attack paths</h3>
-                <span>External entry points to high-value assets</span>
+              <div id="recentTargets" class="stack-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Queue state</div>
+                  <h3>Recent scan jobs</h3>
+                </div>
               </div>
-              <div id="attackPaths" class="attack-paths"></div>
-            </div>
+              <div id="recentJobs" class="stack-list"></div>
+            </article>
           </div>
-          <div class="three-column">
-            <div class="subpanel">
-              <div class="subpanel-header"><h3>Assets</h3><span>Normalized and correlated inventory</span></div>
-              <div id="assetList" class="list-panel"></div>
-            </div>
-            <div class="subpanel">
-              <div class="subpanel-header"><h3>Exposure findings</h3><span>Misconfiguration and exposure posture</span></div>
-              <div id="exposureList" class="list-panel"></div>
-            </div>
-            <div class="subpanel">
-              <div class="subpanel-header"><h3>Identity exposure</h3><span>Credentials, API keys, and privilege paths</span></div>
-              <div id="identityList" class="list-panel"></div>
-            </div>
-          </div>
-          <div class="two-column">
-            <div class="subpanel">
-              <div class="subpanel-header"><h3>Vulnerabilities</h3><span>Top risk-ranked findings with EPSS and context</span></div>
-              <div id="vulnerabilityList" class="list-panel"></div>
-            </div>
-            <div class="subpanel">
-              <div class="subpanel-header"><h3>Monitoring and raw intelligence</h3><span>Scheduled coverage and source observations</span></div>
-              <div id="monitoringList" class="list-panel short"></div>
-              <div id="rawStreamList" class="list-panel"></div>
-            </div>
+
+          <div class="content-grid two-up">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Priority board</div>
+                  <h3>Top risky assets</h3>
+                </div>
+              </div>
+              <div id="topAssets" class="stack-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Threat feed</div>
+                  <h3>EPSS and exploit context</h3>
+                </div>
+              </div>
+              <div id="threatIntelList" class="stack-list"></div>
+            </article>
           </div>
         </section>
 
-        <section id="jobs" class="panel">
-          <div class="panel-title-row">
-            <div>
-              <h2>Scan jobs</h2>
-              <p>Search for jobs by target and open detailed reports.</p>
-            </div>
-            <div class="toolbar">
-              <button id="recoverJobs" class="ghost">Recover stuck jobs</button>
-              <button id="cleanupJobs" class="ghost">Cleanup stale jobs</button>
-              <button id="resetData" class="ghost">Reset all data</button>
-              <input id="jobSearch" type="text" placeholder="Search jobs by domain" />
-              <button id="jobSearchBtn" class="ghost">Search</button>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Target</th>
-                  <th>Kind</th>
-                  <th>Status</th>
-                  <th>Priority</th>
-                  <th>Progress</th>
-                  <th>Attempts</th>
-                  <th>Created</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="jobTable"></tbody>
-            </table>
+        <section id="view-inventory" class="view">
+          <div class="content-grid split-main">
+            <article class="panel split-list">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Registered targets</div>
+                  <h3>Inventory search</h3>
+                </div>
+                <div class="toolbar">
+                  <input id="targetSearch" type="text" placeholder="Search domains, IPs, and CIDRs" />
+                  <button id="targetSearchBtn" class="button quiet">Search</button>
+                </div>
+              </div>
+              <div id="targetTable" class="record-list"></div>
+            </article>
+
+            <article class="panel split-detail">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Target drill-down</div>
+                  <h3 id="selectedTargetTitle">Select a target</h3>
+                  <p id="selectedTargetSubtitle">Assets, identities, graph relationships, and evidence will appear here.</p>
+                </div>
+                <div class="toolbar">
+                  <button id="runIntel" class="button quiet">Refresh intelligence</button>
+                  <button id="scanSelected" class="button accent">Scan selected</button>
+                </div>
+              </div>
+
+              <div id="targetSummary" class="summary-grid"></div>
+
+              <div class="content-grid two-up">
+                <article class="subpanel">
+                  <div class="subpanel-title">Attack paths</div>
+                  <div id="attackPaths" class="stack-list"></div>
+                </article>
+                <article class="subpanel">
+                  <div class="subpanel-title">Relationship graph</div>
+                  <svg id="graphCanvas" class="graph-canvas" viewBox="0 0 860 340"></svg>
+                </article>
+              </div>
+
+              <div class="content-grid three-up">
+                <article class="subpanel">
+                  <div class="subpanel-title">Assets</div>
+                  <div id="assetList" class="stack-list tall"></div>
+                </article>
+                <article class="subpanel">
+                  <div class="subpanel-title">Exposure findings</div>
+                  <div id="exposureList" class="stack-list tall"></div>
+                </article>
+                <article class="subpanel">
+                  <div class="subpanel-title">Identity surface</div>
+                  <div id="identityList" class="stack-list tall"></div>
+                </article>
+              </div>
+
+              <div class="content-grid two-up">
+                <article class="subpanel">
+                  <div class="subpanel-title">Risk-ranked vulnerabilities</div>
+                  <div id="vulnerabilityList" class="stack-list tall"></div>
+                </article>
+                <article class="subpanel">
+                  <div class="subpanel-title">Monitoring and raw intelligence</div>
+                  <div id="monitoringList" class="stack-list short"></div>
+                  <div id="rawStreamList" class="stack-list tall"></div>
+                </article>
+              </div>
+            </article>
           </div>
         </section>
 
-        <section id="reporting" class="panel">
-          <div class="panel-title-row">
-            <div>
-              <h2>Detailed reporting</h2>
-              <p>Click a job to open full scan evidence, EPSS-backed prioritization, stage logs, and tool output.</p>
-            </div>
+        <section id="view-jobs" class="view">
+          <div class="content-grid split-main">
+            <article class="panel split-list">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Execution queue</div>
+                  <h3>Scan jobs</h3>
+                </div>
+                <div class="toolbar">
+                  <input id="jobSearch" type="text" placeholder="Search jobs by domain" />
+                  <button id="jobSearchBtn" class="button quiet">Search</button>
+                </div>
+              </div>
+              <div id="jobTable" class="record-list"></div>
+            </article>
+
+            <article class="panel split-detail">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Pipeline evidence</div>
+                  <h3>Selected job report</h3>
+                </div>
+              </div>
+              <div id="reportBody" class="report-shell"></div>
+            </article>
           </div>
-          <div id="reportBody" class="report-grid"></div>
         </section>
 
-        <section id="operations" class="panel">
-          <div class="panel-title-row">
-            <div>
-              <h2>Operations</h2>
-              <p>Workers, automation, threat intelligence, and notification status.</p>
-            </div>
+        <section id="view-reporting" class="view">
+          <div class="content-grid two-up">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Portfolio summary</div>
+                  <h3>Program reporting</h3>
+                </div>
+              </div>
+              <div id="portfolioCards" class="summary-grid"></div>
+              <div id="reportFeed" class="stack-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Exposure board</div>
+                  <h3>Observed exposures</h3>
+                </div>
+              </div>
+              <div id="exposureBoard" class="stack-list tall"></div>
+            </article>
           </div>
-          <div class="three-column">
-            <div class="subpanel">
-              <div class="subpanel-header"><h3>Scanner nodes</h3><span>Heartbeat, load, and capacity</span></div>
-              <div id="nodeList" class="list-panel"></div>
-            </div>
-            <div class="subpanel">
-              <div class="subpanel-header"><h3>Automation rules</h3><span>Event-driven and scheduled workflow actions</span></div>
-              <div id="automationList" class="list-panel"></div>
-            </div>
-            <div class="subpanel">
-              <div class="subpanel-header"><h3>Threat intelligence</h3><span>CVSS, EPSS, KEV, and exploit context</span></div>
-              <div id="threatIntelList" class="list-panel"></div>
-            </div>
+
+          <div class="content-grid two-up">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Asset feed</div>
+                  <h3>Application and service surface</h3>
+                </div>
+              </div>
+              <div id="assetFeed" class="stack-list tall"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Workflow feed</div>
+                  <h3>Notifications and automation</h3>
+                </div>
+              </div>
+              <div id="notificationList" class="stack-list"></div>
+              <div id="automationList" class="stack-list"></div>
+            </article>
           </div>
-          <div class="subpanel">
-            <div class="subpanel-header"><h3>Notifications</h3><span>Queued operational alerts and platform messages</span></div>
-            <div id="notificationList" class="list-panel"></div>
+        </section>
+
+        <section id="view-tools" class="view">
+          <div class="content-grid two-up">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Live scanner path</div>
+                  <h3>Manual tool execution</h3>
+                </div>
+              </div>
+              <div id="runtimeSummary" class="status-grid"></div>
+              <div class="form-grid compact-grid">
+                <label class="field">
+                  <span>Tool</span>
+                  <select id="toolName"></select>
+                </label>
+                <label class="field field-span-2">
+                  <span>Target</span>
+                  <input id="toolTarget" type="text" placeholder="example.com or https://example.com" />
+                </label>
+                <label class="field">
+                  <span>Timeout</span>
+                  <input id="toolTimeout" type="number" min="1" max="300" value="20" />
+                </label>
+              </div>
+              <div class="launch-actions">
+                <button id="runTool" class="button accent">Run tool</button>
+                <div id="toolHint" class="status-line">Run a scanner adapter to inspect command resolution and fallback behavior.</div>
+              </div>
+              <div id="toolExecution" class="console-shell"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Runtime inventory</div>
+                  <h3>Tool availability map</h3>
+                </div>
+              </div>
+              <div id="toolInventory" class="tool-grid"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="view-settings" class="view">
+          <div class="content-grid two-up">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Runtime state</div>
+                  <h3>Scanner nodes and health</h3>
+                </div>
+              </div>
+              <div id="operationsSummary" class="status-grid"></div>
+              <div id="nodeList" class="stack-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Configuration</div>
+                  <h3>Platform controls</h3>
+                </div>
+              </div>
+              <div id="settingsCards" class="summary-grid"></div>
+              <div class="stack-list">
+                <article class="record-card">
+                  <strong>Reset guidance</strong>
+                  <p class="muted">
+                    Resetting runtime data keeps your code, EPSS file, API keys, organizations, and automation defaults, but clears targets,
+                    jobs, findings, snapshots, notifications, and scanner heartbeats.
+                  </p>
+                </article>
+              </div>
+            </article>
           </div>
         </section>
       </main>
     </div>
 
     <dialog id="detailDialog" class="detail-dialog">
-      <div class="detail-header">
+      <div class="dialog-head">
         <h3 id="detailTitle">Details</h3>
-        <button id="closeDetail" class="ghost">Close</button>
+        <button id="closeDetail" class="button quiet">Close</button>
       </div>
       <div id="detailContent" class="detail-content"></div>
     </dialog>
 
     <script src="./app.js"></script>
   </body>
-  </html>
+</html>

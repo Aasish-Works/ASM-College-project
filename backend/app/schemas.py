@@ -133,3 +133,9 @@ class IntelligenceRunRequest(BaseModel):
 class ThreatIntelRefreshRequest(BaseModel):
     cve: str | None = None
 
+
+class ToolExecutionRequest(BaseModel):
+    tool: str
+    target: str
+    stage: str | None = None
+    timeout_seconds: int | None = Field(default=None, ge=1, le=300)

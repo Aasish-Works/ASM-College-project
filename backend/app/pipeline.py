@@ -213,6 +213,7 @@ def _parse_http(stdout: str, source: str) -> list[RawAssetStream]:
                 host=host,
                 protocol="https" if url.startswith("https://") else "http",
                 title=title,
+                status_code=status,
                 source=source,
                 confidence=0.8,
                 trusted=False,
@@ -431,9 +432,34 @@ def _deduplicate_vulns(vulnerabilities: list[dict[str, object]]) -> list[dict[st
     return list(best.values())
 
 
-def execute_scan_pipeline(target, scan_kind: str = "full_scan") -> PipelineResult:
+def _emit_progress(
+    callback,
+    progress: float,
+    *,
+    stage: str,
+    status: str,
+    message: str,
+    tool: str | None = None,
+) -> None:
+    if callback is None:
+        return
+    callback(
+        round(progress, 2),
+        {
+            "stage": stage,
+            "status": status,
+            "message": message,
+            "tool": tool,
+        },
+    )
+
+
+def execute_scan_pipeline(target, scan_kind: str = "full_scan", progress_callback=None) -> PipelineResult:
     result = PipelineResult()
     raw_logs: list[str] = []
+    plan = stage_tool_plan(scan_kind)
+    total_units = max(1, 1 + sum(len(tools) for tools in plan.values()))
+    completed_units = 0
 
     stage_started = datetime.utcnow()
     intelligence = collect_multi_source_intelligence(target)
@@ -450,14 +476,29 @@ def execute_scan_pipeline(target, scan_kind: str = "full_scan") -> PipelineResul
             logs=f"Collected {len(intelligence['streams'])} raw asset streams and {len(intelligence['identities'])} identity observations.",
         ).to_record()
     )
+    completed_units += 1
+    _emit_progress(
+        progress_callback,
+        8 + (completed_units / total_units) * 72,
+        stage="multi_source_intelligence",
+        status="completed",
+        message=f"Collected {len(intelligence['streams'])} raw intelligence observations.",
+    )
 
-    for stage, tools in stage_tool_plan(scan_kind).items():
+    for stage, tools in plan.items():
         stage_start = datetime.utcnow()
         stage_logs: list[str] = []
+        _emit_progress(
+            progress_callback,
+            8 + (completed_units / total_units) * 72,
+            stage=stage,
+            status="running",
+            message=f"Running {len(tools)} tool adapters for the {stage} stage.",
+        )
         for tool in tools:
             tool_result: ToolResult = run_tool(tool, target.name, stage)
             result.tool_results.append(tool_result.to_record())
-            raw_logs.append(f"## {tool}\n{tool_result.stdout}")
+            raw_logs.append(f"## {tool}\n{tool_result.stdout}\n{tool_result.stderr}".strip())
             stage_logs.append(f"{tool}: {'fallback' if tool_result.fallback_used else 'native'}")
 
             if tool in {"subfinder", "amass", "assetfinder", "puredns"}:
@@ -499,6 +540,15 @@ def execute_scan_pipeline(target, scan_kind: str = "full_scan") -> PipelineResul
                             details={"status": status, "path": path},
                         )
                     )
+            completed_units += 1
+            _emit_progress(
+                progress_callback,
+                8 + (completed_units / total_units) * 72,
+                stage=stage,
+                status="running",
+                message=f"{tool} finished in {tool_result.duration_ms} ms using {'fallback' if tool_result.fallback_used else 'native'} execution.",
+                tool=tool,
+            )
 
         stage_finish = datetime.utcnow()
         result.stage_logs.append(
@@ -510,6 +560,13 @@ def execute_scan_pipeline(target, scan_kind: str = "full_scan") -> PipelineResul
                 duration_ms=int((stage_finish - stage_start).total_seconds() * 1000),
                 logs="; ".join(stage_logs),
             ).to_record()
+        )
+        _emit_progress(
+            progress_callback,
+            8 + (completed_units / total_units) * 72,
+            stage=stage,
+            status="completed",
+            message=f"Completed {stage} with {len(tools)} tool adapters.",
         )
 
     result.streams = _deduplicate_streams(result.streams)
@@ -529,4 +586,11 @@ def execute_scan_pipeline(target, scan_kind: str = "full_scan") -> PipelineResul
         summary["classifications"][stream.classification] = summary["classifications"].get(stream.classification, 0) + 1
     result.snapshot = summary
     result.raw_log = "\n\n".join(raw_logs)
+    _emit_progress(
+        progress_callback,
+        92.0,
+        stage="correlation",
+        status="completed",
+        message=f"Correlated {len(result.streams)} assets and {len(result.vulnerabilities)} findings into the inventory graph.",
+    )
     return result

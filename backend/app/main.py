@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +19,7 @@ from .intelligence import guess_target_type, normalize_target_name
 from .models import (
     ApiKey,
     Asset,
+    AssetRelationship,
     AssetSnapshot,
     AssetSourceEvent,
     AutomationRule,
@@ -54,10 +56,11 @@ from .schemas import (
     TargetUpdate,
     ThreatIntelRefreshRequest,
     TicketCreate,
+    ToolExecutionRequest,
     VulnerabilityUpdate,
 )
 from .threat_intel import lookup_threat_context, refresh_threat_feeds
-from .tools import scan_profiles, stage_tool_plan
+from .tools import run_tool, scan_profiles, stage_tool_plan, tool_inventory
 
 
 app = FastAPI(
@@ -338,6 +341,8 @@ def serialize_job(job: ScanJob) -> dict[str, object]:
         "finished_at": job.finished_at,
         "next_run_at": job.next_run_at,
         "worker_hint": job.worker_hint,
+        "current_stage": job.current_stage,
+        "status_message": job.status_message,
         "last_error": job.last_error,
         "created_at": job.created_at,
         "updated_at": job.updated_at,
@@ -368,6 +373,7 @@ def serialize_result(result: ScanResult) -> dict[str, object]:
         "fallback_used": result.fallback_used,
         "stdout_sample": result.stdout_sample,
         "stderr_sample": result.stderr_sample,
+        "payload": _json_load(result.payload) or {},
         "artifact": _json_load(result.artifact_json) or {},
         "created_at": result.created_at,
     }
@@ -377,6 +383,7 @@ def project_job_stages(job: ScanJob) -> list[dict[str, object]]:
     stage_names = list(stage_tool_plan(job.kind).keys())
     if not stage_names:
         return []
+    current_stage = (job.current_stage or "").strip().lower()
     projected = [
         {
             "id": f"projected-scheduler-{job.id}",
@@ -390,12 +397,17 @@ def project_job_stages(job: ScanJob) -> list[dict[str, object]]:
         }
     ]
     for index, stage_name in enumerate(stage_names):
+        stage_key = stage_name.strip().lower()
         if job.status == "completed":
             status = "completed"
-        elif job.status == "running" and index == 0:
+        elif job.status == "running" and current_stage == stage_key:
+            status = "running"
+        elif job.status == "running" and not current_stage and index == 0:
             status = "running"
         elif job.status in {"queued", "retry_pending"} and index == 0:
             status = job.status
+        elif job.status == "failed" and current_stage == stage_key:
+            status = "failed"
         else:
             status = "pending"
         projected.append(
@@ -407,9 +419,10 @@ def project_job_stages(job: ScanJob) -> list[dict[str, object]]:
                 "started_at": job.started_at if status == "running" else None,
                 "finished_at": None,
                 "duration_ms": 0,
-                "logs": "Projected live stage while the pipeline is still executing."
+                "logs": job.status_message
+                or "Projected live stage while the pipeline is still executing."
                 if status in {"running", "queued", "retry_pending", "pending"}
-                else "",
+                else (job.last_error or ""),
             }
         )
     return projected
@@ -427,6 +440,31 @@ def serialize_node(node: ScannerNode) -> dict[str, object]:
         "memory_percent": node.memory_percent,
         "disk_percent": node.disk_percent,
         "last_heartbeat": node.last_heartbeat,
+    }
+
+
+def scanner_runtime_payload(db: Session) -> dict[str, object]:
+    inventory = tool_inventory()
+    native_available = sum(1 for item in inventory if item["native_available"])
+    native_supported = sum(1 for item in inventory if item["native_supported"])
+    wordlist_path = Path(settings.default_wordlist_path)
+    return {
+        "mode": settings.native_tool_mode,
+        "tool_timeout_seconds": settings.tool_timeout_seconds,
+        "wordlist_path": str(wordlist_path),
+        "wordlist_available": wordlist_path.exists(),
+        "worker_count": settings.worker_count,
+        "scheduler_interval_seconds": settings.scheduler_interval_seconds,
+        "profiles": scan_profiles(),
+        "tool_plan": stage_tool_plan(),
+        "inventory": inventory,
+        "summary": {
+            "tool_count": len(inventory),
+            "native_available_count": native_available,
+            "native_supported_count": native_supported,
+            "fallback_only_count": len(inventory) - native_supported,
+        },
+        "nodes": [serialize_node(node) for node in db.query(ScannerNode).order_by(ScannerNode.node_name).all()],
     }
 
 
@@ -713,6 +751,21 @@ def _reset_all_platform_data(db: Session) -> dict[str, int]:
         return summary
     finally:
         orchestrator.start()
+
+
+@app.get("/system/status")
+def system_status(db: Session = Depends(get_db)) -> dict[str, object]:
+    return {
+        "app": {
+            "name": app.title,
+            "version": app.version,
+            "native_tool_mode": settings.native_tool_mode,
+            "database_url": settings.database_url,
+        },
+        "health": {"status": "ok", "time": datetime.utcnow()},
+        "stats": stats(db),
+        "runtime": scanner_runtime_payload(db),
+    }
 
 
 @app.get("/")
@@ -1136,6 +1189,23 @@ def heartbeat(payload: NodeHeartbeat, db: Session = Depends(get_db)) -> dict[str
 def list_nodes(db: Session = Depends(get_db)) -> list[dict[str, object]]:
     nodes = db.query(ScannerNode).order_by(ScannerNode.node_name).all()
     return [serialize_node(node) for node in nodes]
+
+
+@app.get("/scanner/runtime")
+def scanner_runtime(db: Session = Depends(get_db)) -> dict[str, object]:
+    return scanner_runtime_payload(db)
+
+
+@app.get("/tools/catalog")
+def tools_catalog(db: Session = Depends(get_db)) -> dict[str, object]:
+    return scanner_runtime_payload(db)
+
+
+@app.post("/tools/execute")
+def execute_tool(payload: ToolExecutionRequest, db: Session = Depends(get_db)) -> dict[str, object]:
+    del db
+    result = run_tool(payload.tool, payload.target, payload.stage or "manual", timeout=payload.timeout_seconds)
+    return {"result": result.to_record()}
 
 
 @app.get("/assets")
@@ -1655,13 +1725,7 @@ def legacy_automation(db: Session = Depends(get_db)) -> list[dict[str, object]]:
 
 @app.get("/api/scanner-environment")
 def legacy_scanner_environment(db: Session = Depends(get_db)) -> dict[str, object]:
-    return {
-        "nodes": [serialize_node(node) for node in db.query(ScannerNode).order_by(ScannerNode.node_name).all()],
-        "tool_plan": stage_tool_plan(),
-        "scan_profiles": scan_profiles(),
-        "worker_count": settings.worker_count,
-        "scheduler_interval_seconds": settings.scheduler_interval_seconds,
-    }
+    return scanner_runtime_payload(db)
 
 
 @app.get("/api/exposures")

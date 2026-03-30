@@ -5,12 +5,13 @@ from collections import defaultdict, deque
 
 from sqlalchemy.orm import Session
 
-from .models import Asset, AssetRelationship, Vulnerability
+from .models import Asset, AssetRelationship, IdentityExposure, Vulnerability
 
 
 def build_asset_graph(db: Session, target_id: int) -> dict[str, list[dict[str, object]]]:
     assets = db.query(Asset).filter(Asset.target_id == target_id).all()
     relationships = db.query(AssetRelationship).filter(AssetRelationship.target_id == target_id).all()
+    identities = db.query(IdentityExposure).filter(IdentityExposure.target_id == target_id).all()
 
     vuln_scores: dict[int, list[float]] = defaultdict(list)
     for vulnerability in db.query(Vulnerability).filter(Vulnerability.target_id == target_id).all():
@@ -32,6 +33,22 @@ def build_asset_graph(db: Session, target_id: int) -> dict[str, list[dict[str, o
             }
         )
 
+    for identity in identities:
+        node_id = identity.id * -1
+        privilege_weight = {"critical": 90.0, "high": 78.0, "medium": 58.0, "low": 35.0}.get(identity.privilege_level, 35.0)
+        sensitivity = "critical" if identity.privilege_level == "critical" else "high" if identity.privilege_level == "high" else "medium"
+        nodes.append(
+            {
+                "id": node_id,
+                "label": identity.principal,
+                "kind": "identity",
+                "classification": "identity_attack_surface",
+                "exposure": identity.exposure,
+                "sensitivity": sensitivity,
+                "risk_score": privilege_weight,
+            }
+        )
+
     edges = [
         {
             "id": relation.id,
@@ -43,6 +60,18 @@ def build_asset_graph(db: Session, target_id: int) -> dict[str, list[dict[str, o
         }
         for relation in relationships
     ]
+    edges.extend(
+        {
+            "id": f"identity-{identity.id}",
+            "source": identity.asset_id,
+            "target": identity.id * -1,
+            "relation": "owned_by",
+            "confidence": 0.9,
+            "reason": identity.evidence,
+        }
+        for identity in identities
+        if identity.asset_id is not None
+    )
     return {"nodes": nodes, "edges": edges}
 
 

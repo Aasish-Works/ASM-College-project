@@ -157,12 +157,14 @@ class ASMOrchestrator:
             return None
         job.status = "queued"
         job.progress = 0.0
+        job.attempts = 0
         job.started_at = None
+        job.finished_at = None
         job.next_run_at = _now()
         job.worker_hint = None
+        job.current_stage = None
+        job.status_message = "Job manually requeued."
         job.last_error = None
-        if job.finished_at is not None:
-            job.finished_at = None
         self.enqueue_job(job.id, job.priority)
         db.flush()
         return job
@@ -396,6 +398,9 @@ class ASMOrchestrator:
                 "stderr": str(tool_result.get("stderr") or "")[:4000],
                 "fallback_used": bool(tool_result["fallback_used"]),
                 "exit_code": int(tool_result["exit_code"]),
+                "native_available": bool(tool_result.get("native_available")),
+                "native_supported": bool(tool_result.get("native_supported")),
+                "resolved_target": tool_result.get("resolved_target"),
             }
             db.add(
                 ScanResult(
@@ -408,7 +413,7 @@ class ASMOrchestrator:
                     stdout_sample=str(tool_result.get("stdout") or "")[:4000],
                     stderr_sample=str(tool_result.get("stderr") or "")[:4000],
                     payload=_json_dumps(payload),
-                    artifact_json=_json_dumps({"command": tool_result.get("command")}),
+                    artifact_json=_json_dumps(tool_result.get("artifact") or {"command": tool_result.get("command")}),
                 )
             )
 
@@ -551,6 +556,8 @@ class ASMOrchestrator:
         job.progress = 10.0
         job.attempts += 1
         job.worker_hint = worker_name
+        job.current_stage = "scheduler"
+        job.status_message = "Job picked up by the worker and waiting for the scan pipeline."
         job.last_error = None
         db.flush()
         db.commit()
@@ -558,17 +565,30 @@ class ASMOrchestrator:
         target = db.query(Target).filter(Target.id == job.target_id).one()
 
         try:
-            result = execute_scan_pipeline(target, scan_kind=job.kind)
+            def progress_callback(progress: float, event: dict[str, object]) -> None:
+                job.progress = min(max(progress, job.progress or 0.0), 96.0)
+                job.current_stage = str(event.get("stage") or job.current_stage or "running")
+                job.status_message = str(event.get("message") or job.status_message or "")
+                db.flush()
+                db.commit()
+
+            result = execute_scan_pipeline(target, scan_kind=job.kind, progress_callback=progress_callback)
             allowed_streams, allowed_vulnerabilities = _apply_blacklist(db, target, result.streams, result.vulnerabilities)
             result.streams = allowed_streams
             result.vulnerabilities = allowed_vulnerabilities
             asset_map = persist_asset_graph(db, target, result.streams, result.relationships, result.identities)
             job.progress = 75.0
+            job.current_stage = "persistence"
+            job.status_message = f"Persisting {len(result.streams)} assets, {len(result.identities)} identities, and {len(result.vulnerabilities)} findings."
+            db.flush()
+            db.commit()
             persisted_vulnerabilities = self._persist_results(db, job, result, asset_map)
             target.last_scan_at = _now()
             target.last_intelligence_sync = _now()
             job.progress = 100.0
             job.status = "completed"
+            job.current_stage = "completed"
+            job.status_message = f"Scan completed with {len(asset_map)} assets and {len(persisted_vulnerabilities)} findings."
             job.last_error = None
             job.finished_at = _now()
             self._run_automations(db, job, persisted_vulnerabilities)
@@ -580,6 +600,8 @@ class ASMOrchestrator:
                 logger.exception("Job processing failed and job could not be reloaded for job_id=%s", job_id)
                 return
             job.last_error = str(exc)
+            job.current_stage = job.current_stage or "error"
+            job.status_message = str(exc)
             if job.attempts <= job.max_retries:
                 job.status = "retry_pending"
                 job.next_run_at = _now() + timedelta(minutes=2 ** job.attempts)

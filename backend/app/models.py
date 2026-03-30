@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text as sql_text,
 )
 from sqlalchemy.orm import relationship
 
@@ -187,6 +188,8 @@ class ScanJob(Base, TimestampMixin):
     finished_at = Column(DateTime, nullable=True)
     next_run_at = Column(DateTime, nullable=True)
     worker_hint = Column(String(255), nullable=True)
+    current_stage = Column(String(128), nullable=True)
+    status_message = Column(Text, nullable=True)
     last_error = Column(Text, nullable=True)
 
 
@@ -215,8 +218,8 @@ class ScanResult(Base, TimestampMixin):
     fallback_used = Column(Boolean, default=False, nullable=False)
     stdout_sample = Column(Text, nullable=True)
     stderr_sample = Column(Text, nullable=True)
-    payload = Column(Text, default="{}", nullable=False)
-    artifact_json = Column(Text, nullable=True)
+    payload = Column(Text, default="{}", server_default=sql_text("'{}'"), nullable=False)
+    artifact_json = Column(Text, default="{}", server_default=sql_text("'{}'"), nullable=False)
 
 
 class Vulnerability(Base, TimestampMixin):

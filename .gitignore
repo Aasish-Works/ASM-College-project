@@ -1,30 +1,29 @@
-# Python environments
-.venv/
-backend/.venv/
+```markdown
+# Documentation and reports
+*.docx
+*.pdf
 
-# Python cache
-__pycache__/
+# Python artifacts
 *.pyc
-*.pyo
-*.pyd
+__pycache__/
 
-# Local runtime databases
-asm.db
-*.db
-*.db-shm
-*.db-wal
-
-# Logs and local outputs
+# Logs
 *.log
-*.out
+
+# Environment files
+.env
+.env.local
+*.env.*
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
 *.tmp
 
-# OS / editor
-.DS_Store
-Thumbs.db
-.idea/
-
-# Keep VS Code workspace tasks/launch, ignore the rest
-.vscode/*
-!.vscode/tasks.json
-!.vscode/launch.json
+# Build/dist directories
+dist/
+build/
+target/
+```
